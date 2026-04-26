@@ -31,7 +31,11 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- [ ] Scope gate: Work is strictly tied to editorial-comment polling and wiki-go feedback application.
+- [ ] Deployment gate: Design is service-native, with health checks, idempotency, and recovery behavior.
+- [ ] TDD gate: Test-first plan covers unit, integration, and contract tests for changed behavior.
+- [ ] AI framework gate: Uses a maintained agent framework and OpenAI-compatible provider abstraction.
+- [ ] Simplicity gate: Dependency additions are minimal and justified; module boundaries remain clear.
 
 ## Project Structure
 

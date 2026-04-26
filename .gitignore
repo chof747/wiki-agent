@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# Editors/IDEs
+.idea/
+.vscode/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Temporary working files
+.tmp/
+tmp/
+
+# Dependency and build outputs
+node_modules/
+dist/
+build/
+coverage/
+
+# Python cache (common in agent tooling)
+__pycache__/
+*.py[cod]
+
+# Speckit local cache/artifacts (if created)
+.specify/.cache/

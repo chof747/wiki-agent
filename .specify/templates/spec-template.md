@@ -100,6 +100,21 @@
 - **[Entity 1]**: [What it represents, key attributes without implementation]
 - **[Entity 2]**: [What it represents, relationships to other entities]
 
+## Operational and AI Constraints *(mandatory)*
+
+- **OA-001**: Define polling/scheduling behavior, including interval and retry/backoff expectations.
+- **OA-002**: Define idempotency rules for repeated polling cycles and duplicate feedback events.
+- **OA-003**: Define AI orchestration boundaries (agent framework, provider abstraction, timeout limits).
+- **OA-004**: Define deployment/runtime expectations inside the existing wiki service.
+- **OA-005**: Define required observability signals (logs, metrics, failure alerts).
+
+## Test Strategy *(mandatory)*
+
+- List required unit tests for each affected module.
+- List integration/contract tests for scheduler, AI orchestration, and wiki write flows.
+- State explicit red-green-refactor intent for implementation sequencing.
+- Define failure-path tests (provider outage, invalid feedback, wiki write failure).
+
 ## Success Criteria *(mandatory)*
 
 <!--
