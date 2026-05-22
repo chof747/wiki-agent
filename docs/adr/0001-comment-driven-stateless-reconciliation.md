@@ -1,3 +1,5 @@
 # Comment-driven stateless reconciliation for wiki updates
 
+Status: Superseded by [0002-scheduled-comment-agent-with-durable-jobs](0002-scheduled-comment-agent-with-durable-jobs.md)
+
 For comment-triggered non-interactive invocations, we update exactly one explicitly identified target wiki page, then delete the source comment only after update success is confirmed. Duplicate deliveries are handled with stateless reconciliation using live source/page checks and terminal status codes (`SUCCESS`, `ALREADY_PROCESSED`, `MISSING_TARGET_ID`, `MULTI_TARGET_REQUEST`, `UPDATE_FAILED`, `DELETE_FAILED`) with single-attempt confirmation and no traceability store, prioritizing operational simplicity and deterministic behavior over audit detail.
