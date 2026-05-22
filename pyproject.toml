@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wiki-agent"
+version = "0.1.0"
+description = "Scheduled Wiki-Go comment agent service skeleton."
+requires-python = ">=3.14,<3.15"
+dependencies = []
+
+[project.scripts]
+wiki-agent = "wiki_agent.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wiki_agent"]
+

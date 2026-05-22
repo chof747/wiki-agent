@@ -27,6 +27,12 @@ coverage/
 # Python cache (common in agent tooling)
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
+
+# Runtime config
+config.toml
+!tests/fixtures/config.toml
 
 # Speckit local cache/artifacts (if created)
 .specify/.cache/
