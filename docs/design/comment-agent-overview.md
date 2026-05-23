@@ -113,3 +113,4 @@ The following behaviors are intentionally deferred to later issues:
 - [CONTEXT.md](../../CONTEXT.md)
 - [ADR 0001](../adr/0001-comment-driven-stateless-reconciliation.md)
 - [ADR 0002](../adr/0002-scheduled-comment-agent-with-durable-jobs.md)
+- [Integration Harness](./integration-harness.md)

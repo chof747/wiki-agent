@@ -162,6 +162,7 @@ This repo uses one canonical workflow with conditional branches.
 3. Direct implementation is allowed for docs-only work, comment-only work, scaffolding, and no-behavior refactors.
 4. If the codebase lacks a reasonable test seam for the requested behavior change, stop and ask whether creating that seam is in scope.
 5. If implementation reveals more than one independently shippable outcome, stop and split scope.
+6. If the repo defines a canonical integration harness for a runtime boundary, future runtime work must extend that harness rather than introduce a parallel setup flow unless a human explicitly approves replacing it.
 
 If scope must split:
 
@@ -194,6 +195,7 @@ Additional rules:
 2. Add any issue-specific verification required by the acceptance criteria.
 3. If a required check cannot be run locally, the implementer must say so explicitly in the HIL review packet.
 4. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
+5. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
 
 ## 13. Issue Breadcrumbs
 
