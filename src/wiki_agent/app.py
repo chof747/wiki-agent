@@ -61,13 +61,15 @@ class WikiAgentApp:
                     "eligible_comment_events": len(comment_events),
                 },
             )
+            return_code = 0
         else:
             self._worker.run_once()
+            return_code = 0
         LOGGER.info(
             "Wiki Agent one-shot execution finished.",
             extra={"event": "service.run_once_finished"},
         )
-        return 0
+        return return_code
 
     def request_shutdown(self) -> None:
         self._shutdown.set()

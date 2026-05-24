@@ -105,9 +105,10 @@ def _parse_helper_output(raw_output: str) -> list[object]:
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        comments = payload.get("comments")
-        if isinstance(comments, list):
-            return comments
+        for field in ("comments", "matches"):
+            records = payload.get(field)
+            if isinstance(records, list):
+                return records
 
     raise ScannerError("wikigo-comments-scan output must be a JSON array, object, or NDJSON stream")
 
@@ -171,8 +172,4 @@ def _collect_source_metadata(record: dict[str, Any]) -> dict[str, Any]:
         "user",
         "username",
     }
-    return {
-        key: value
-        for key, value in record.items()
-        if key not in excluded
-    }
+    return {key: value for key, value in record.items() if key not in excluded}

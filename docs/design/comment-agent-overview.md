@@ -95,6 +95,7 @@ The repo currently provides:
 - `wiki-agent run` and `wiki-agent run-once` CLI commands
 - stdlib-based config loading and JSON logging
 - a bootable service stub with clean shutdown handling
+- a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`
 - a **Worker** stub boundary
 - smoke and config tests
 
