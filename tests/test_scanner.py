@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import subprocess
-from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -11,63 +9,63 @@ from wiki_agent.config import load_config
 from wiki_agent.scanner import Scanner, ScannerError
 
 
-def test_scanner_dry_run_normalizes_only_eligible_comments() -> None:
+def test_scanner_dry_run_accepts_matches_summary_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     config = load_config(Path(__file__).parent / "fixtures" / "config.toml")
     scanner = Scanner(config)
-    buffer = StringIO()
 
-    payload = {
-        "scanned_pages": 3,
-        "matched_comments": 4,
-        "matches": [
-            {
-                "page": "__tests__/scanner-dry-run/eligible",
-                "id": "c-1",
-                "text": "@marvin: tighten the intro",
-                "author": "alice",
-            },
-            {
-                "page": "__tests__/scanner-dry-run/self",
-                "id": "c-2",
-                "text": "@marvin self-authored",
-                "author": "marvin",
-            },
-            {
-                "page": "__tests__/scanner-dry-run/marker",
-                "id": "c-3",
-                "text": "@marvin wiki-agent: already handled",
-                "author": "alice",
-            },
-            {
-                "page": "__tests__/scanner-dry-run/non-matching",
-                "id": "c-4",
-                "text": "@other-bot leave this alone",
-                "author": "alice",
-            },
-        ],
+    helper_output = """
+    {
+      "target_user": "marvin",
+      "scanned_pages": 3,
+      "matched_comments": 4,
+      "matches": [
+        {
+          "page": "__tests__/scanner-dry-run/eligible",
+          "id": "c-1",
+          "text": "@marvin: tighten the intro",
+          "author": "alice"
+        },
+        {
+          "page": "__tests__/scanner-dry-run/self",
+          "id": "c-2",
+          "text": "@marvin self-authored",
+          "author": "marvin"
+        },
+        {
+          "page": "__tests__/scanner-dry-run/marker",
+          "id": "c-3",
+          "text": "@marvin wiki-agent: already handled",
+          "author": "alice"
+        },
+        {
+          "page": "__tests__/scanner-dry-run/non-matching",
+          "id": "c-4",
+          "text": "@other-bot leave this alone",
+          "author": "alice"
+        }
+      ]
     }
+    """
 
-    scanner._invoke_helper = lambda: payload  # type: ignore[method-assign]
-    exit_code = scanner.run_dry_run(stdout=buffer)
+    def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(args[0], 0, stdout=helper_output, stderr="")
 
-    assert exit_code == 0
-    summary = json.loads(buffer.getvalue())
-    assert summary == {
-        "mode": "scanner_dry_run",
-        "bot_name": "marvin",
-        "scanned_pages": 3,
-        "matched_comments": 4,
-        "eligible_comment_events": [
-            {
-                "source_system": "wikigo",
-                "comment_identity": "c-1",
-                "target_page": "__tests__/scanner-dry-run/eligible",
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    events = scanner.dry_run()
+
+    assert [event.as_dict() for event in events] == [
+        {
+            "comment_identity": "c-1",
+            "target_page": "__tests__/scanner-dry-run/eligible",
+            "original_comment_text": "@marvin: tighten the intro",
+            "prompt": ": tighten the intro",
+            "source_metadata": {
                 "author": "alice",
-                "comment_body": "@marvin: tighten the intro",
-                "prompt": "tighten the intro",
-            }
-        ],
-    }
+                "source_system": "wiki-go",
+            },
+        }
+    ]
 
 
 def test_scanner_dry_run_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,4 +78,4 @@ def test_scanner_dry_run_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     with pytest.raises(ScannerError, match="invalid JSON"):
-        scanner.run_dry_run(stdout=StringIO())
+        scanner.dry_run()

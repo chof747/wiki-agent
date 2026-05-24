@@ -117,25 +117,19 @@ def run_test() -> None:
         raise SystemExit(result.stderr or result.stdout or "wiki-agent dry-run failed")
 
     summary = json.loads(result.stdout)
-    eligible_events = summary.get("eligible_comment_events")
+    comment_events = summary.get("comment_events")
     if (
-        summary.get("mode") != "scanner_dry_run"
-        or summary.get("bot_name") != BOT_USERNAME
-        or not isinstance(summary.get("scanned_pages"), int)
-        or not isinstance(summary.get("matched_comments"), int)
-        or not isinstance(eligible_events, list)
-        or len(eligible_events) != 1
+        not isinstance(comment_events, list)
+        or len(comment_events) != 1
     ):
         raise SystemExit(
             "unexpected dry-run payload:\n"
             + json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True)
         )
-    event = eligible_events[0]
+    event = comment_events[0]
     expected_event = {
-        "source_system": "wikigo",
         "target_page": "__tests__/scanner-dry-run/eligible",
-        "author": "admin",
-        "comment_body": "@marvin tighten the intro",
+        "original_comment_text": "@marvin tighten the intro",
         "prompt": "tighten the intro",
     }
     for key, value in expected_event.items():
@@ -146,8 +140,13 @@ def run_test() -> None:
             )
     if not str(event.get("comment_identity", "")).strip():
         raise SystemExit("dry-run payload did not include a comment identity")
-    if summary["matched_comments"] < 3:
-        raise SystemExit("dry-run payload did not report all seeded mention matches")
+    source_metadata = event.get("source_metadata")
+    if not isinstance(source_metadata, dict):
+        raise SystemExit("dry-run payload did not include source metadata")
+    if source_metadata.get("source_system") != "wiki-go":
+        raise SystemExit("dry-run payload used an unexpected source system marker")
+    if source_metadata.get("author") != "admin":
+        raise SystemExit("dry-run payload did not preserve the source author")
 
     print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
 

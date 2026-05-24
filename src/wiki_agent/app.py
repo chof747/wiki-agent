@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import sys
 import threading
 
 from wiki_agent.config import AppConfig
-from wiki_agent.scanner import Scanner
+from wiki_agent.scanner import Scanner, ScannerError
 from wiki_agent.worker import Worker
 
 
@@ -37,7 +39,29 @@ class WikiAgentApp:
             extra={"event": "service.run_once_started"},
         )
         if dry_run:
-            return_code = self._scanner.run_dry_run()
+            try:
+                comment_events = self._scanner.dry_run()
+            except ScannerError as exc:
+                LOGGER.error(
+                    "Scanner dry-run failed.",
+                    extra={"event": "scanner.dry_run_failed", "error": str(exc)},
+                )
+                return 1
+
+            json.dump(
+                {"comment_events": [event.as_dict() for event in comment_events]},
+                sys.stdout,
+                sort_keys=True,
+            )
+            sys.stdout.write("\n")
+            LOGGER.info(
+                "Scanner dry-run completed.",
+                extra={
+                    "event": "scanner.dry_run_completed",
+                    "eligible_comment_events": len(comment_events),
+                },
+            )
+            return_code = 0
         else:
             self._worker.run_once()
             return_code = 0
