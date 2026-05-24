@@ -10,6 +10,7 @@ from typing import Callable
 from wiki_agent.app import WikiAgentApp
 from wiki_agent.config import ConfigError, load_config
 from wiki_agent.logging import configure_logging
+from wiki_agent.scanner import ScannerError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("config.toml"),
         help="Path to the runtime configuration file.",
     )
+    run_once_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scan once and emit eligible comment events without mutating external systems.",
+    )
 
     return parser
 
@@ -50,10 +56,17 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(config.service.log_level)
     app = WikiAgentApp(config)
 
-    if args.command == "run":
-        return _run_service(app)
-    if args.command == "run-once":
-        return app.run_once()
+    try:
+        if args.command == "run":
+            return _run_service(app)
+        if args.command == "run-once":
+            return app.run_once(dry_run=args.dry_run)
+    except ScannerError as exc:
+        LOGGER.error(
+            "Scanner dry-run failed.",
+            extra={"event": "scanner.dry_run_failed", "error": str(exc)},
+        )
+        return 1
 
     parser.error(f"unsupported command: {args.command}")
     return 2
@@ -82,4 +95,3 @@ def _run_service(app: WikiAgentApp) -> int:
 
 def _restore_signal(signum: int, handler: int | Callable[[int, FrameType | None], None] | None) -> None:
     signal.signal(signum, handler)
-

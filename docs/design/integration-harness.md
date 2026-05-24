@@ -42,6 +42,12 @@ The repo should expose one small Python entrypoint with subcommands for lifecycl
 - `test`
 - `down`
 
+The first concrete entrypoint lives at:
+
+```bash
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run python tools/integration_harness.py <subcommand>
+```
+
 The harness owns:
 
 - Wiki-Go container lifecycle
@@ -108,6 +114,7 @@ Future runtime issues should extend this harness rather than create parallel set
 
 - Keep `uv run pytest` as the default fast baseline for now.
 - Run Wiki-Go and Postgres integration coverage through an explicit harness-managed command until the repo intentionally promotes it into the default or CI baseline.
+- The first harness-managed verification command is `uv run python tools/integration_harness.py test`.
 
 ## Related Documents
 

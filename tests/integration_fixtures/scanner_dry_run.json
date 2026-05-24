@@ -1,0 +1,42 @@
+{
+  "documents": [
+    {
+      "title": "__tests__",
+      "path": "__tests__",
+      "markdown": "# Integration Harness Fixtures\n",
+      "comments": []
+    },
+    {
+      "title": "scanner-dry-run",
+      "path": "__tests__/scanner-dry-run",
+      "markdown": "# Scanner Dry Run Fixtures\n",
+      "comments": []
+    },
+    {
+      "title": "Scanner Dry Run Eligible Fixture",
+      "path": "__tests__/scanner-dry-run/eligible",
+      "markdown": "# Eligible Fixture\n\nThis page backs the real scanner dry-run integration slice.\n",
+      "comments": [
+        {
+          "author": "admin",
+          "content": "@marvin tighten the intro"
+        },
+        {
+          "author": "marvin",
+          "content": "@marvin self authored should be ignored"
+        }
+      ]
+    },
+    {
+      "title": "Scanner Dry Run Marker Fixture",
+      "path": "__tests__/scanner-dry-run/marker",
+      "markdown": "# Marker Fixture\n\nThis page verifies the marker filter.\n",
+      "comments": [
+        {
+          "author": "admin",
+          "content": "@marvin wiki-agent: already handled"
+        }
+      ]
+    }
+  ]
+}

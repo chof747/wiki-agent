@@ -61,7 +61,7 @@ The **Runner** is responsible for execution against Wiki-Go:
 
 ### One-shot mode
 
-`wiki-agent run-once` exists for controlled execution and smoke testing. In the current skeleton, it exercises the same bootstrap path and enters the **Worker** boundary once before exiting.
+`wiki-agent run-once` exists for controlled execution and smoke testing. `wiki-agent run-once --dry-run` executes the real **Scanner** helper boundary once, emits normalized eligible comment events to stdout JSON, and exits before the **Worker** boundary.
 
 ## Configuration Model
 
@@ -91,6 +91,7 @@ The repo currently provides:
 - `wiki-agent run` and `wiki-agent run-once` CLI commands
 - stdlib-based config loading and JSON logging
 - a bootable service stub with clean shutdown handling
+- a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`
 - a **Worker** stub boundary
 - smoke and config tests
 
@@ -98,7 +99,6 @@ The repo currently provides:
 
 The following behaviors are intentionally deferred to later issues:
 
-- real **Scanner** implementation
 - durable Postgres repository and schema management
 - actual **Runner** subprocess execution
 - health and status HTTP endpoints
