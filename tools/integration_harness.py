@@ -61,8 +61,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def up() -> None:
-    ensure_runtime_files()
     state = load_or_create_state()
+    if container_exists() and container_host_port() is None:
+        run_docker(["rm", "-f", CONTAINER_NAME])
+    if container_exists():
+        state = sync_state_with_container(state)
+    ensure_runtime_files(state)
 
     if not container_exists():
         if not (DATA_ROOT / "config.yaml").exists():
@@ -71,12 +75,16 @@ def up() -> None:
     elif not container_running():
         start_container(state)
 
+    state = sync_state_with_container(state)
+    ensure_runtime_files(state)
     wait_for_http(state["base_url"])
     if not can_login(state["base_url"], ADMIN_USERNAME, ADMIN_PASSWORD):
         down()
         wipe_data_root()
         bootstrap_default_data_dir(state)
         start_container(state)
+        state = sync_state_with_container(state)
+        ensure_runtime_files(state)
         wait_for_http(state["base_url"])
     print(f"Wiki-Go harness is ready at {state['base_url']}")
 
@@ -97,15 +105,16 @@ def run_test() -> None:
     env = os.environ.copy()
     env["PATH"] = f"{SHIMS_ROOT}:{env['PATH']}"
     env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
+    env["WIKI_AGENT_INTEGRATION_CONFIG"] = str(WIKI_AGENT_CONFIG_PATH)
     result = subprocess.run(
         [
             "uv",
             "run",
-            "wiki-agent",
-            "run-once",
-            "--dry-run",
-            "--config",
-            str(WIKI_AGENT_CONFIG_PATH),
+            "pytest",
+            "--override-ini=addopts=",
+            "-m",
+            "integration",
+            "tests/integration",
         ],
         cwd=REPO_ROOT,
         env=env,
@@ -114,41 +123,12 @@ def run_test() -> None:
         check=False,
     )
     if result.returncode != 0:
-        raise SystemExit(result.stderr or result.stdout or "wiki-agent dry-run failed")
+        raise SystemExit(result.stderr or result.stdout or "integration pytest run failed")
 
-    summary = json.loads(result.stdout)
-    comment_events = summary.get("comment_events")
-    if (
-        not isinstance(comment_events, list)
-        or len(comment_events) != 1
-    ):
-        raise SystemExit(
-            "unexpected dry-run payload:\n"
-            + json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True)
-        )
-    event = comment_events[0]
-    expected_event = {
-        "target_page": "__tests__/scanner-dry-run/eligible",
-        "original_comment_text": "@marvin tighten the intro",
-        "prompt": "tighten the intro",
-    }
-    for key, value in expected_event.items():
-        if event.get(key) != value:
-            raise SystemExit(
-                "unexpected dry-run payload:\n"
-                + json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True)
-            )
-    if not str(event.get("comment_identity", "")).strip():
-        raise SystemExit("dry-run payload did not include a comment identity")
-    source_metadata = event.get("source_metadata")
-    if not isinstance(source_metadata, dict):
-        raise SystemExit("dry-run payload did not include source metadata")
-    if source_metadata.get("source_system") != "wiki-go":
-        raise SystemExit("dry-run payload used an unexpected source system marker")
-    if source_metadata.get("author") != "admin":
-        raise SystemExit("dry-run payload did not preserve the source author")
-
-    print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=os.sys.stderr)
 
 
 def down() -> None:
@@ -159,14 +139,14 @@ def down() -> None:
         print("Wiki-Go harness container is not present.")
 
 
-def ensure_runtime_files() -> None:
+def ensure_runtime_files(state: dict[str, Any]) -> None:
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     SHIMS_ROOT.mkdir(parents=True, exist_ok=True)
     BOT_CONFIG_PATH.write_text(
         json.dumps(
             {
-                "base_url": load_or_create_state()["base_url"],
+                "base_url": state["base_url"],
                 "username": BOT_USERNAME,
                 "password": BOT_PASSWORD,
             },
@@ -178,7 +158,7 @@ def ensure_runtime_files() -> None:
     ADMIN_CONFIG_PATH.write_text(
         json.dumps(
             {
-                "base_url": load_or_create_state()["base_url"],
+                "base_url": state["base_url"],
                 "username": ADMIN_USERNAME,
                 "password": ADMIN_PASSWORD,
             },
@@ -207,8 +187,50 @@ def load_or_create_state() -> dict[str, Any]:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     port = allocate_port()
     state = {"base_url": f"http://127.0.0.1:{port}", "port": port}
-    STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    save_state(state)
     return state
+
+
+def save_state(state: dict[str, Any]) -> None:
+    STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def sync_state_with_container(state: dict[str, Any]) -> dict[str, Any]:
+    if not container_exists():
+        return state
+
+    port = container_host_port()
+    if port is None:
+        raise SystemExit(
+            f"{CONTAINER_NAME} exists but does not publish 8080/tcp; remove it and rerun the harness"
+        )
+    if port == state["port"]:
+        return state
+
+    synced_state = {"base_url": f"http://127.0.0.1:{port}", "port": port}
+    save_state(synced_state)
+    return synced_state
+
+
+def container_host_port() -> int | None:
+    result = subprocess.run(
+        ["docker", "port", CONTAINER_NAME, "8080/tcp"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if "No public port '8080/tcp' published" in detail:
+            return None
+        raise SystemExit(detail or "docker command failed")
+
+    mapping = result.stdout.strip()
+    _, _, host_port = mapping.rpartition(":")
+    if not host_port.isdigit():
+        raise SystemExit(f"unable to determine Wiki-Go harness port from: {mapping}")
+    return int(host_port)
 
 
 def allocate_port() -> int:
@@ -255,7 +277,6 @@ def start_container(state: dict[str, Any]) -> None:
 
 
 def write_shims() -> None:
-    helper_script = REPO_ROOT / "tools" / "wikigo_helper.py"
     shim_map = {
         "wikigo-config": ["config"],
         "wikigo-api": ["api"],
@@ -272,7 +293,7 @@ def write_shims() -> None:
                 f': "${{WIKIGO_RUNTIME_CONFIG:={BOT_CONFIG_PATH}}}"\n'
                 "export WIKIGO_RUNTIME_CONFIG\n"
                 f'exec env UV_CACHE_DIR="${{UV_CACHE_DIR:-/private/tmp/uv-cache}}" '
-                f'uv run python "{helper_script}" {argv} "$@"\n'
+                f'uv run wikigo-helper {argv} "$@"\n'
             ),
             encoding="utf-8",
         )
