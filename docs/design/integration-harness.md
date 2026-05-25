@@ -111,6 +111,12 @@ Future runtime issues should extend this harness rather than create parallel set
 - **Runner** subprocess integration
 - end-to-end update and rejection flows
 
+For implementation workflow purposes, harness extension is expected for runtime
+issues that touch those boundaries whenever the needed helper-command surface
+and fixture/seeding seams already exist. If a branch cannot extend harness
+coverage yet, the implementer should treat that as an explicit blocker to
+document rather than a silent omission.
+
 ## Local Verification
 
 - Keep `uv run pytest` as the default fast baseline for now.
@@ -118,6 +124,7 @@ Future runtime issues should extend this harness rather than create parallel set
 - The first harness-managed verification command is `uv run wiki-agent-integration test`.
 - The harness-owned `test` path should delegate to pytest integration cases rather than embedding primary scenario assertions inline in the harness script.
 - Future real runtime integration coverage should be added as more pytest cases under `tests/integration/` and executed through the same harness-managed command path.
+- Later harness-managed verification commands should be added as runtime coverage expands, and qualifying runtime issues should invoke the relevant harness command in their final local verification set.
 
 ## Related Documents
 
