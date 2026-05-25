@@ -189,6 +189,8 @@ The current default baseline is:
 uv run pytest
 ```
 
+That baseline is also the current GitHub Actions merge gate for `main` through the required status check `CI / pytest`.
+
 Additional rules:
 
 1. If CLI behavior changes, run a CLI smoke check relevant to the changed command path.
@@ -196,6 +198,7 @@ Additional rules:
 3. If a required check cannot be run locally, the implementer must say so explicitly in the HIL review packet.
 4. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
 5. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
+6. Harness-backed Wiki-Go and Postgres integration coverage remains a future follow-up and is not part of the required `CI / pytest` gate yet.
 
 ## 13. Issue Breadcrumbs
 
