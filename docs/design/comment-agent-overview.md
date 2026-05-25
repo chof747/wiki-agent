@@ -65,7 +65,7 @@ The **Runner** is responsible for execution against Wiki-Go:
 
 The current implementation supports a scanner-only dry-run at `wiki-agent run-once --dry-run`. That path performs one non-mutating **Scanner** pass, emits normalized eligible **Comment Event** data to stdout as structured JSON, and does not write **Comment Jobs**, invoke the **Runner**, or mutate Wiki-Go.
 
-Without `--dry-run`, the current skeleton still exercises the bootstrap path and enters the **Worker** boundary once before exiting.
+Without `--dry-run`, the current implementation performs one **Scanner** pass, ensures the internal Postgres schema exists, persists or refreshes eligible **Comment Jobs**, then enters the **Worker** boundary once before exiting.
 
 ## Configuration Model
 
@@ -96,6 +96,8 @@ The repo currently provides:
 - stdlib-based config loading and JSON logging
 - a bootable service stub with clean shutdown handling
 - a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`
+- a Postgres-backed **Comment Job** repository with idempotent startup DDL
+- durable enqueueing that preserves one canonical job per `source_system + comment_identity`
 - a **Worker** stub boundary
 - smoke and config tests
 
@@ -103,8 +105,6 @@ The repo currently provides:
 
 The following behaviors are intentionally deferred to later issues:
 
-- durable **Scanner** enqueueing and Postgres-backed **Comment Job** persistence
-- durable Postgres repository and schema management
 - actual **Runner** subprocess execution
 - health and status HTTP endpoints
 - full status mapping and invocation persistence

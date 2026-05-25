@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_run_once_dry_run_emits_normalized_comment_events(tmp_path: Path) -> None:
     script = shutil.which("wiki-agent")
@@ -107,13 +109,29 @@ def test_run_once_smoke() -> None:
     assert script is not None
 
     config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
+    if not postgres_dsn:
+        pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run non-dry-run CLI smoke coverage")
+
+    helper_dir = Path(__file__).parent.parent / ".runtime" / "integration-harness" / "bin"
+    helper_path = helper_dir / "wikigo-comments-scan"
+    if shutil.which("wikigo-comments-scan") is None and not helper_path.exists():
+        pytest.skip(
+            "wikigo-comments-scan is not available; run the integration harness or add the helper to PATH"
+        )
+
+    env = os.environ.copy()
+    env["WIKI_AGENT_POSTGRES_DSN"] = postgres_dsn
+    if helper_path.exists():
+        env["PATH"] = f"{helper_dir}{os.pathsep}{env['PATH']}"
     result = subprocess.run(
         [script, "run-once", "--config", str(config_path)],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
-    assert result.returncode == 0
+    assert result.returncode == 0, f"{result.stderr}"
     events = [json.loads(line)["event"] for line in result.stderr.splitlines()]
     assert "worker.run_once_not_implemented" in events

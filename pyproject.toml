@@ -7,7 +7,9 @@ name = "wiki-agent"
 version = "0.1.0"
 description = "Scheduled Wiki-Go comment agent service skeleton."
 requires-python = ">=3.14,<3.15"
-dependencies = []
+dependencies = [
+    "psycopg[binary]>=3.3.4",
+]
 
 [project.scripts]
 wiki-agent = "wiki_agent.cli:main"

@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from wiki_agent.config import AppConfig
+
+if TYPE_CHECKING:
+    from wiki_agent.comment_jobs import CommentJobRepository, EnqueueResult
 
 
 class ScannerError(RuntimeError):
@@ -36,6 +39,9 @@ class Scanner:
         self._bot_mention = f"@{config.bot_name}"
 
     def dry_run(self) -> list[CommentEvent]:
+        return self.scan()
+
+    def scan(self) -> list[CommentEvent]:
         records = _parse_helper_output(_run_scan_helper())
         events: list[CommentEvent] = []
         for record in records:
@@ -43,6 +49,12 @@ class Scanner:
             if event is not None:
                 events.append(event)
         return events
+
+    def enqueue(self, repository: "CommentJobRepository") -> list["EnqueueResult"]:
+        results: list[EnqueueResult] = []
+        for event in self.scan():
+            results.append(repository.enqueue_event(event))
+        return results
 
     def _normalize_record(self, record: object) -> CommentEvent | None:
         if not isinstance(record, dict):
