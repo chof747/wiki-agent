@@ -102,6 +102,7 @@ Branch prefix rules:
 2. Otherwise create `feat/<issue-number>-<short-slug>`.
 3. If multiple labels are present and one of them is `bug`, `bug` wins.
 4. The branch prefix must not be renamed later if the issue is relabeled.
+5. These repo-specific branch prefixes override generic agent defaults such as `codex/` for work in this repository.
 
 Examples:
 
@@ -135,7 +136,7 @@ This repo uses one canonical workflow with conditional branches.
 2. `triage` when labels, readiness, or acceptance criteria are not yet correct.
 3. Branch creation after the issue is `ready-for-agent`.
 4. `diagnose` first for bug work.
-5. `tdd` for behavior-changing implementation.
+5. `tdd` for behavior-changing implementation. This is the required default path, not an optional preference.
 6. Local verification.
 7. HIL review on the branch.
 8. `github:yeet` after approval for commit, push, and draft PR creation.
@@ -157,15 +158,17 @@ This repo uses one canonical workflow with conditional branches.
 
 ## 10. Implementation Rules
 
-1. Use `tdd` by default for behavior-changing work.
-2. For bug work, reproduce and minimize the problem with `diagnose` before switching into `tdd`.
-3. Direct implementation is allowed for docs-only work, comment-only work, scaffolding, and no-behavior refactors.
-4. If the codebase lacks a reasonable test seam for the requested behavior change, stop and ask whether creating that seam is in scope.
-5. If implementation reveals more than one independently shippable outcome, stop and split scope.
-6. If the repo defines a canonical integration harness for a runtime boundary, future runtime work must extend that harness rather than introduce a parallel setup flow unless a human explicitly approves replacing it.
-7. For runtime issues that touch the Scanner, Worker, Runner, Postgres Comment Job lifecycle, or Wiki-Go mutation flow, the implementer must explicitly assess harness impact before coding.
-8. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
-9. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
+1. Behavior-changing work must start with `tdd` unless a human explicitly approves a different path in advance.
+2. The required `tdd` starting point is a failing automated test or harness-backed integration case that demonstrates the missing behavior, bug, or contract gap before implementation begins.
+3. For bug work, reproduce and minimize the problem with `diagnose` before switching into `tdd`.
+4. Direct implementation is allowed for docs-only work, comment-only work, scaffolding, and no-behavior refactors.
+5. If the codebase lacks a reasonable test seam for the requested behavior change, stop and ask whether creating that seam is in scope.
+6. If the implementer does not follow the red/green path for a behavior-changing issue, that deviation must be called out before coding and must be justified again in the HIL review packet.
+7. If implementation reveals more than one independently shippable outcome, stop and split scope.
+8. If the repo defines a canonical integration harness for a runtime boundary, future runtime work must extend that harness rather than introduce a parallel setup flow unless a human explicitly approves replacing it.
+9. For runtime issues that touch the Scanner, Worker, Runner, Postgres Comment Job lifecycle, or Wiki-Go mutation flow, the implementer must explicitly assess harness impact before coding.
+10. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
+11. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
 
 If scope must split:
 
@@ -246,7 +249,8 @@ The review packet must include all of the following:
 4. Exact local verification performed.
 5. Known risks, gaps, or items not verified.
 6. Whether docs, `CONTEXT.md`, or ADRs changed, or why they did not.
-7. Whether harness coverage changed; if not, the concrete blocker and linked follow-up issue.
+7. Whether the implementation followed the red/green `tdd` path; if not, the concrete reason for the deviation and when it was approved.
+8. Whether harness coverage changed; if not, the concrete blocker and linked follow-up issue.
 
 Chat approval is authoritative. The approval does not need to be duplicated into GitHub before work resumes.
 
