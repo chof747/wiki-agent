@@ -45,7 +45,7 @@ The repo should expose one small Python entrypoint with subcommands for lifecycl
 The first concrete entrypoint lives at:
 
 ```bash
-env UV_CACHE_DIR=/private/tmp/uv-cache uv run python tools/integration_harness.py <subcommand>
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration <subcommand>
 ```
 
 The harness owns:
@@ -98,6 +98,7 @@ The harness owns:
 ### First slice
 
 - Prove the real **Scanner** dry-run path against real Wiki-Go fixtures.
+- Express harness-backed integration assertions as dedicated pytest cases under `tests/integration/`, executed through the harness-managed `test` command.
 - Scaffold the harness structure so later issues can extend it for **Worker**, **Runner**, and Postgres-backed **Comment Job** flows.
 
 ### Future slices
@@ -120,10 +121,10 @@ document rather than a silent omission.
 
 - Keep `uv run pytest` as the default fast baseline for now.
 - Run Wiki-Go and Postgres integration coverage through an explicit harness-managed command until the repo intentionally promotes it into the default or CI baseline.
-- The first harness-managed verification command is `uv run python tools/integration_harness.py test`.
-- Later harness-managed verification commands should be added as runtime
-  coverage expands, and qualifying runtime issues should invoke the relevant
-  harness command in their final local verification set.
+- The first harness-managed verification command is `uv run wiki-agent-integration test`.
+- The harness-owned `test` path should delegate to pytest integration cases rather than embedding primary scenario assertions inline in the harness script.
+- Future real runtime integration coverage should be added as more pytest cases under `tests/integration/` and executed through the same harness-managed command path.
+- Later harness-managed verification commands should be added as runtime coverage expands, and qualifying runtime issues should invoke the relevant harness command in their final local verification set.
 
 ## Related Documents
 

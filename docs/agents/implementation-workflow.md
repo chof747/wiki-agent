@@ -200,6 +200,8 @@ instance enabled so coverage includes the non-dry-run CLI smoke path gated by
 WIKI_AGENT_TEST_POSTGRES_DSN=postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent uv run pytest
 ```
 
+That baseline is also the current GitHub Actions merge gate for `main` through the required status check `CI / pytest`.
+
 Additional rules:
 
 1. If CLI behavior changes, run a CLI smoke check relevant to the changed command path.
@@ -209,6 +211,7 @@ Additional rules:
 5. If a required check cannot be run locally, the implementer must say so explicitly in the HIL review packet.
 6. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
 7. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
+8. Harness-backed Wiki-Go and Postgres integration coverage remains a future follow-up and is not part of the required `CI / pytest` gate yet.
 
 ## 13. Issue Breadcrumbs
 

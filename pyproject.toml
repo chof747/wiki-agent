@@ -13,12 +13,19 @@ dependencies = [
 
 [project.scripts]
 wiki-agent = "wiki_agent.cli:main"
+wiki-agent-integration = "tools.integration_harness:main"
+wikigo-helper = "tools.wikigo_helper:main"
 
 [dependency-groups]
 dev = [
   "pytest>=8.4,<9",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/wiki_agent"]
+[tool.pytest.ini_options]
+markers = [
+  "integration: runs against the repo-owned integration harness",
+]
+addopts = "-m 'not integration'"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/wiki_agent", "tools"]
