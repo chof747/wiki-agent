@@ -163,6 +163,9 @@ This repo uses one canonical workflow with conditional branches.
 4. If the codebase lacks a reasonable test seam for the requested behavior change, stop and ask whether creating that seam is in scope.
 5. If implementation reveals more than one independently shippable outcome, stop and split scope.
 6. If the repo defines a canonical integration harness for a runtime boundary, future runtime work must extend that harness rather than introduce a parallel setup flow unless a human explicitly approves replacing it.
+7. For runtime issues that touch the Scanner, Worker, Runner, Postgres Comment Job lifecycle, or Wiki-Go mutation flow, the implementer must explicitly assess harness impact before coding.
+8. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
+9. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
 
 If scope must split:
 
@@ -189,13 +192,23 @@ The current default baseline is:
 uv run pytest
 ```
 
+The final local verification pass must also run with the local Postgres dev
+instance enabled so coverage includes the non-dry-run CLI smoke path gated by
+`WIKI_AGENT_TEST_POSTGRES_DSN`, for example:
+
+```bash
+WIKI_AGENT_TEST_POSTGRES_DSN=postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent uv run pytest
+```
+
 Additional rules:
 
 1. If CLI behavior changes, run a CLI smoke check relevant to the changed command path.
-2. Add any issue-specific verification required by the acceptance criteria.
-3. If a required check cannot be run locally, the implementer must say so explicitly in the HIL review packet.
-4. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
-5. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
+2. Before stopping for HIL, rerun the test suite with `WIKI_AGENT_TEST_POSTGRES_DSN` pointed at the local dev Postgres instance and report that command exactly in the review packet.
+3. If the issue touches a runtime boundary covered or intended to be covered by the repo-owned integration harness, include the harness-managed verification command in the final verification set unless the issue documents why that is not yet possible.
+4. Add any issue-specific verification required by the acceptance criteria.
+5. If a required check cannot be run locally, the implementer must say so explicitly in the HIL review packet.
+6. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
+7. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
 
 ## 13. Issue Breadcrumbs
 
@@ -230,6 +243,7 @@ The review packet must include all of the following:
 4. Exact local verification performed.
 5. Known risks, gaps, or items not verified.
 6. Whether docs, `CONTEXT.md`, or ADRs changed, or why they did not.
+7. Whether harness coverage changed; if not, the concrete blocker and linked follow-up issue.
 
 Chat approval is authoritative. The approval does not need to be duplicated into GitHub before work resumes.
 

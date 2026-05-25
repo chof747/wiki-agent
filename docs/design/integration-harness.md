@@ -110,11 +110,20 @@ Future runtime issues should extend this harness rather than create parallel set
 - **Runner** subprocess integration
 - end-to-end update and rejection flows
 
+For implementation workflow purposes, harness extension is expected for runtime
+issues that touch those boundaries whenever the needed helper-command surface
+and fixture/seeding seams already exist. If a branch cannot extend harness
+coverage yet, the implementer should treat that as an explicit blocker to
+document rather than a silent omission.
+
 ## Local Verification
 
 - Keep `uv run pytest` as the default fast baseline for now.
 - Run Wiki-Go and Postgres integration coverage through an explicit harness-managed command until the repo intentionally promotes it into the default or CI baseline.
 - The first harness-managed verification command is `uv run python tools/integration_harness.py test`.
+- Later harness-managed verification commands should be added as runtime
+  coverage expands, and qualifying runtime issues should invoke the relevant
+  harness command in their final local verification set.
 
 ## Related Documents
 
