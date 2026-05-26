@@ -69,3 +69,23 @@ def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) ->
     assert "Last readiness probe error: connection refused or timed out" in message
     assert "Wiki-Go container state: status=exited, exit_code=1, error=none" in message
     assert "Wiki-Go container logs:\nboot failed" in message
+
+
+def test_start_container_runs_wikigo_as_host_user(monkeypatch) -> None:
+    captured: list[str] = []
+
+    monkeypatch.setattr(integration_harness, "container_exists", lambda: False)
+    monkeypatch.setattr(integration_harness.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(integration_harness.os, "getgid", lambda: 1002)
+    monkeypatch.setattr(integration_harness, "run_docker", lambda args: captured.extend(args) or "")
+
+    integration_harness.start_container({"base_url": "http://127.0.0.1:4010", "port": 4010})
+
+    assert captured[:6] == [
+        "run",
+        "-d",
+        "--name",
+        integration_harness.CONTAINER_NAME,
+        "--user",
+        "1001:1002",
+    ]

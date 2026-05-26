@@ -279,12 +279,15 @@ def start_container(state: dict[str, Any]) -> None:
             run_docker(["start", CONTAINER_NAME])
         return
     print(f"Creating Wiki-Go harness container at {state['base_url']}")
+    user = f"{os.getuid()}:{os.getgid()}"
     run_docker(
         [
             "run",
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--user",
+            user,
             "-p",
             f"{state['port']}:8080",
             "-v",
