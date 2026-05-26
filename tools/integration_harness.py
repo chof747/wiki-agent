@@ -198,6 +198,7 @@ def load_or_create_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 

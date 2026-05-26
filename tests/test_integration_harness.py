@@ -5,6 +5,19 @@ from pathlib import Path
 from tools import integration_harness
 
 
+def test_load_or_create_state_creates_runtime_directory(monkeypatch, tmp_path: Path) -> None:
+    state_path = tmp_path / "runtime" / "integration-harness" / "state.json"
+
+    monkeypatch.setattr(integration_harness, "STATE_PATH", state_path)
+
+    state = integration_harness.load_or_create_state()
+
+    assert state_path.exists()
+    assert state_path.parent.is_dir()
+    assert state["base_url"].startswith("http://127.0.0.1:")
+    assert isinstance(state["port"], int)
+
+
 def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     data_root = runtime_root / "wikigo-data"
