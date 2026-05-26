@@ -98,16 +98,16 @@ The repo currently provides:
 - a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`
 - a Postgres-backed **Comment Job** repository with idempotent startup DDL
 - durable enqueueing that preserves one canonical job per `source_system + comment_identity`
-- a **Worker** stub boundary
+- a **Worker** path that claims one queued job, invokes the external **Runner**, and persists one finalized terminal status
+- a language-agnostic **Runner** subprocess boundary using stdin for the **Prompt Envelope**, stdout for exactly one finalized **Response**, and stderr for diagnostics
 - smoke and config tests
 
 ## Deferred Work
 
 The following behaviors are intentionally deferred to later issues:
 
-- actual **Runner** subprocess execution
 - health and status HTTP endpoints
-- full status mapping and invocation persistence
+- invocation history beyond the current durable **Comment Job** status fields
 
 ## Related Documents
 

@@ -30,7 +30,7 @@ class WikiAgentApp:
         self._config = config
         self._scanner = scanner or Scanner(config)
         self._repository = repository or CommentJobRepository(config.postgres.dsn)
-        self._worker = worker or Worker(config)
+        self._worker = worker or Worker(config, repository=self._repository)
         self._shutdown = threading.Event()
 
     def run(self) -> int:
