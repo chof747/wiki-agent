@@ -275,10 +275,8 @@ def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
 def start_container(state: dict[str, Any]) -> None:
     if container_exists():
         if not container_running():
-            print(f"Starting existing Wiki-Go harness container at {state['base_url']}")
             run_docker(["start", CONTAINER_NAME])
         return
-    print(f"Creating Wiki-Go harness container at {state['base_url']}")
     user = f"{os.getuid()}:{os.getgid()}"
     run_docker(
         [
