@@ -33,6 +33,7 @@ DEFAULT_ADMIN_POSTGRES_DSN = "postgresql://integration:integration@localhost:543
 DEFAULT_RUNTIME_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"
 ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
 RUNTIME_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_RUNTIME_DSN"
+WIKIGO_READY_TIMEOUT_SECONDS = 90.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -350,7 +351,7 @@ def container_running() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def wait_for_http(base_url: str, timeout_seconds: float = 30.0) -> None:
+def wait_for_http(base_url: str, timeout_seconds: float = WIKIGO_READY_TIMEOUT_SECONDS) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         try:
