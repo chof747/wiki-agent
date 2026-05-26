@@ -29,6 +29,10 @@ BOT_PASSWORD = "marvin-pass"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
 CONTAINER_NAME = "wiki-agent-integration-harness"
+DEFAULT_ADMIN_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/postgres"
+DEFAULT_RUNTIME_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"
+ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
+RUNTIME_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_RUNTIME_DSN"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,6 +110,8 @@ def run_test() -> None:
     env["PATH"] = f"{SHIMS_ROOT}:{env['PATH']}"
     env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
     env["WIKI_AGENT_INTEGRATION_CONFIG"] = str(WIKI_AGENT_CONFIG_PATH)
+    env[ADMIN_POSTGRES_DSN_ENV] = admin_postgres_dsn()
+    env[RUNTIME_POSTGRES_DSN_ENV] = runtime_postgres_dsn()
     result = subprocess.run(
         [
             "uv",
@@ -171,7 +177,7 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
         (
             f'bot_name = "{BOT_USERNAME}"\n\n'
             "[postgres]\n"
-            'dsn = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"\n\n'
+            f'dsn = "{runtime_postgres_dsn()}"\n\n'
             "[runner]\n"
             'command = ["codex-runner", "run"]\n\n'
             "[service]\n"
@@ -243,6 +249,14 @@ def helper_env(config_path: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["WIKIGO_RUNTIME_CONFIG"] = str(config_path)
     return env
+
+
+def admin_postgres_dsn() -> str:
+    return os.environ.get(ADMIN_POSTGRES_DSN_ENV, DEFAULT_ADMIN_POSTGRES_DSN)
+
+
+def runtime_postgres_dsn() -> str:
+    return os.environ.get(RUNTIME_POSTGRES_DSN_ENV, DEFAULT_RUNTIME_POSTGRES_DSN)
 
 
 def bootstrap_default_data_dir(state: dict[str, Any]) -> None:

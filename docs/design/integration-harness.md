@@ -32,6 +32,8 @@ Use it when implementing or extending local runtime setup, integration tests, or
 - The same harness entrypoint is reused.
 - Wiki-Go runs in the same repo-owned disposable container model.
 - CI may use a disposable Postgres service owned by the CI job.
+- The harness may consume `WIKI_AGENT_INTEGRATION_ADMIN_DSN` and `WIKI_AGENT_INTEGRATION_RUNTIME_DSN` from the CI job environment.
+- GitHub Actions exposes this path as the additive `CI / integration` check, while `CI / pytest` remains the required stable merge gate.
 
 ## Harness Contract
 
@@ -118,6 +120,12 @@ Future runtime issues should extend this harness rather than create parallel set
 - The first harness-managed verification command is `uv run wiki-agent-integration test`.
 - The harness-owned `test` path should delegate to pytest integration cases rather than embedding primary scenario assertions inline in the harness script.
 - Future real runtime integration coverage should be added as more pytest cases under `tests/integration/` and executed through the same harness-managed command path.
+
+## CI Coverage
+
+- GitHub Actions runs the same harness-managed command, `uv run wiki-agent-integration test`, for pull requests to `main`, pushes to `main`, and manual dispatch.
+- `CI / integration` is additional visibility for the harness-backed `tests/integration/` slice and is not initially a required branch-protection check.
+- `CI / pytest` remains the required branch-protection check and the default local verification baseline stays `uv run pytest`.
 
 ## Related Documents
 
