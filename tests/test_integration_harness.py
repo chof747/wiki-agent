@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tools import integration_harness
 
 
@@ -41,3 +43,29 @@ def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_pat
 
     config_text = wiki_agent_config_path.read_text(encoding="utf-8")
     assert 'dsn = "postgresql://ci:ci@localhost:5432/wiki_agent_ci"' in config_text
+
+
+def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) -> None:
+    timeline = iter([0.0, 0.0, 1.0])
+
+    def fake_urlopen(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(integration_harness.time, "time", lambda: next(timeline))
+    monkeypatch.setattr(integration_harness.time, "sleep", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(integration_harness.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(integration_harness, "container_exists", lambda: True)
+    monkeypatch.setattr(
+        integration_harness,
+        "container_state_summary",
+        lambda: "Wiki-Go container state: status=exited, exit_code=1, error=none",
+    )
+    monkeypatch.setattr(integration_harness, "container_logs", lambda: "boot failed")
+
+    with pytest.raises(SystemExit, match="Wiki-Go did not become ready") as excinfo:
+        integration_harness.wait_for_http("http://127.0.0.1:4010", timeout_seconds=0.5)
+
+    message = str(excinfo.value)
+    assert "Last readiness probe error: connection refused or timed out" in message
+    assert "Wiki-Go container state: status=exited, exit_code=1, error=none" in message
+    assert "Wiki-Go container logs:\nboot failed" in message

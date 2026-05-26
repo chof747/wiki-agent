@@ -75,3 +75,9 @@ jobs:
           WIKI_AGENT_INTEGRATION_ADMIN_DSN: postgresql://integration:integration@127.0.0.1:5432/postgres
           WIKI_AGENT_INTEGRATION_RUNTIME_DSN: postgresql://integration:integration@127.0.0.1:5432/wiki_agent_integration
         run: uv run wiki-agent-integration test
+
+      - name: Dump Wiki-Go harness container on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker logs wiki-agent-integration-harness || true
