@@ -56,7 +56,8 @@ class Worker:
             )
             return
 
-        self._repository.update_job_status(job.id, response.status)
+        error_detail = response.stderr.strip() or None
+        self._repository.update_job_status(job.id, response.status, error_detail=error_detail)
         LOGGER.info(
             "Worker finalized job from runner response.",
             extra={

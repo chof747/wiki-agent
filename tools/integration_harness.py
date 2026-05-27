@@ -93,7 +93,7 @@ def reset() -> None:
     state = load_or_create_state()
     env_admin = helper_env(ADMIN_CONFIG_PATH)
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    ensure_user(env_admin, BOT_USERNAME, BOT_PASSWORD, role="editor")
+    ensure_user(env_admin, BOT_USERNAME, BOT_PASSWORD, role="admin")
 
     delete_documents(env_admin, [doc["path"] for doc in fixture["documents"]])
     create_documents_and_comments(env_admin, fixture)
@@ -173,7 +173,7 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
             "[postgres]\n"
             'dsn = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"\n\n'
             "[runner]\n"
-            'command = ["codex-runner", "run"]\n\n'
+            'command = ["wiki-agent-runner"]\n\n'
             "[service]\n"
             'log_level = "INFO"\n'
         ),
@@ -283,6 +283,7 @@ def write_shims() -> None:
         "wikigo-comments": ["comments"],
         "wikigo-comments-scan": ["comments-scan"],
         "wikigo-create-document": ["create-document"],
+        "wikigo-page": ["page"],
     }
     for name, helper_args in shim_map.items():
         shim_path = SHIMS_ROOT / name
