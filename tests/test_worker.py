@@ -17,7 +17,7 @@ def test_worker_claims_job_and_persists_runner_status() -> None:
     worker.run_once()
 
     assert repository.claimed is True
-    assert repository.updated == [(1, "DELETE_FAILED", None)]
+    assert repository.updated == [(1, "DELETE_FAILED", "diagnostic")]
     assert runner_client.jobs == [_job()]
 
 

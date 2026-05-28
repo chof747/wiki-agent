@@ -36,6 +36,16 @@ def main(argv: list[str] | None = None) -> int:
     comments_delete_parser.add_argument("comment_id")
     comments_delete_parser.add_argument("page")
 
+    page_parser = subparsers.add_parser("page")
+    page_subparsers = page_parser.add_subparsers(dest="page_command", required=True)
+
+    page_get_parser = page_subparsers.add_parser("get")
+    page_get_parser.add_argument("page")
+
+    page_save_parser = page_subparsers.add_parser("save")
+    page_save_parser.add_argument("page")
+    page_save_parser.add_argument("content_file", type=Path)
+
     subparsers.add_parser("comments-scan")
 
     create_document_parser = subparsers.add_parser("create-document")
@@ -73,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "comments":
         if args.comments_command == "list":
-            payload = session.get_json(f"/api/comments/{quote_page(args.page)}")
+            payload = read_comments_payload(session, args.page)
             comments = normalize_comments(payload)
             if args.mention_only:
                 mention = f"@{config['username']}"
@@ -86,8 +96,24 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.comments_command == "delete":
-            session.request("DELETE", f"/api/comments/delete/{quote_page(args.page)}/{urllib.parse.quote(args.comment_id)}")
+            delete_comment(session, args.comment_id, args.page)
             print(f"deleted comment: {args.comment_id}")
+            return 0
+
+    if args.command == "page":
+        if args.page_command == "get":
+            payload = read_page_source(session, args.page)
+            print(json.dumps({"markdown": extract_markdown(payload)}, ensure_ascii=False))
+            return 0
+
+        if args.page_command == "save":
+            session.request(
+                "POST",
+                f"/api/save/{quote_page(args.page)}",
+                body=args.content_file.read_bytes(),
+                content_type="text/markdown",
+            )
+            print(f"saved page: {args.page}")
             return 0
 
     if args.command == "comments-scan":
@@ -240,6 +266,115 @@ def normalize_comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return comments
+
+
+def extract_markdown(payload: bytes) -> str:
+    text = payload.decode("utf-8")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+    if isinstance(parsed, dict):
+        for key in ("markdown", "content"):
+            value = parsed.get(key)
+            if isinstance(value, str):
+                return value
+
+        document = parsed.get("document")
+        if isinstance(document, dict):
+            for key in ("markdown", "content"):
+                value = document.get(key)
+                if isinstance(value, str):
+                    return value
+
+    raise SystemExit("GET page response is missing markdown content")
+
+
+def read_comments_payload(session: "WikiGoSession", page: str) -> dict[str, Any]:
+    encoded = urllib.parse.quote(page, safe="")
+    endpoints = [
+        f"/api/comments/{quote_page(page)}",
+        f"/api/comments?path={encoded}",
+        f"/api/comment/{quote_page(page)}",
+        f"/api/comment?path={encoded}",
+        f"/api/discussion/{quote_page(page)}",
+        f"/api/discussions/{quote_page(page)}",
+        f"/api/comments/list/{quote_page(page)}",
+    ]
+
+    last_error: BaseException | None = None
+    for endpoint in endpoints:
+        try:
+            payload = json.loads(session.request("GET", endpoint).decode("utf-8"))
+        except SystemExit as exc:
+            last_error = exc
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    if last_error is not None:
+        raise last_error
+    raise SystemExit("unable to read comments")
+
+
+def read_page_source(session: "WikiGoSession", page: str) -> bytes:
+    endpoints = [
+        f"/api/source/{quote_page(page)}",
+        f"/api/document/{quote_page(page)}",
+    ]
+    last_error: BaseException | None = None
+    for endpoint in endpoints:
+        try:
+            return session.request("GET", endpoint)
+        except SystemExit as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise SystemExit("unable to read page source")
+
+
+def delete_comment(session: "WikiGoSession", comment_id: str, page: str) -> None:
+    delete_endpoints = []
+    if page:
+        delete_endpoints.append(
+            ("DELETE", f"/api/comments/delete/{quote_page(page)}/{urllib.parse.quote(comment_id)}", None, None)
+        )
+
+    delete_endpoints.extend(
+        [
+            ("DELETE", f"/api/comment/{urllib.parse.quote(comment_id)}", None, None),
+            ("DELETE", f"/api/comments/{urllib.parse.quote(comment_id)}", None, None),
+            ("POST", f"/api/comment/{urllib.parse.quote(comment_id)}/delete", None, None),
+            ("POST", f"/api/comments/{urllib.parse.quote(comment_id)}/delete", None, None),
+            ("POST", f"/api/comment/delete/{urllib.parse.quote(comment_id)}", None, None),
+            ("POST", f"/api/comments/delete/{urllib.parse.quote(comment_id)}", None, None),
+        ]
+    )
+
+    for method, endpoint, body, content_type in delete_endpoints:
+        try:
+            session.request(method, endpoint, body=body, content_type=content_type)
+            return
+        except SystemExit:
+            continue
+
+    body = json.dumps({"id": comment_id}).encode("utf-8")
+    for endpoint in (
+        "/api/comment/delete",
+        "/api/comments/delete",
+        "/api/comment/remove",
+        "/api/comments/remove",
+    ):
+        try:
+            session.request("POST", endpoint, body=body, content_type="application/json")
+            return
+        except SystemExit:
+            continue
+
+    raise SystemExit(f"unable to delete comment id {comment_id}: no known delete endpoint worked")
 
 
 def discover_pages(session: WikiGoSession) -> list[str]:

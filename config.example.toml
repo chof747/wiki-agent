@@ -4,8 +4,7 @@ bot_name = "marvin"
 dsn = "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
 
 [runner]
-command = ["codex-runner", "run"]
+command = ["wiki-agent-runner"]
 
 [service]
 log_level = "INFO"
-

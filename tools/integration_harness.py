@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_ROOT = REPO_ROOT / ".runtime" / "integration-harness"
@@ -98,7 +100,8 @@ def reset() -> None:
     state = load_or_create_state()
     env_admin = helper_env(ADMIN_CONFIG_PATH)
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    ensure_user(env_admin, BOT_USERNAME, BOT_PASSWORD, role="editor")
+    ensure_runtime_database()
+    ensure_user(env_admin, BOT_USERNAME, BOT_PASSWORD, role="admin")
 
     delete_documents(env_admin, [doc["path"] for doc in fixture["documents"]])
     create_documents_and_comments(env_admin, fixture)
@@ -180,7 +183,7 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
             "[postgres]\n"
             f'dsn = "{runtime_postgres_dsn()}"\n\n'
             "[runner]\n"
-            'command = ["codex-runner", "run"]\n\n'
+            'command = ["wiki-agent-runner"]\n\n'
             "[service]\n"
             'log_level = "INFO"\n'
         ),
@@ -261,6 +264,24 @@ def runtime_postgres_dsn() -> str:
     return os.environ.get(RUNTIME_POSTGRES_DSN_ENV, DEFAULT_RUNTIME_POSTGRES_DSN)
 
 
+def ensure_runtime_database() -> None:
+    runtime = psycopg.conninfo.conninfo_to_dict(runtime_postgres_dsn())
+    database_name = runtime.get("dbname")
+    if not isinstance(database_name, str) or not database_name:
+        raise SystemExit("runtime Postgres DSN must include a database name")
+
+    admin = psycopg.conninfo.conninfo_to_dict(admin_postgres_dsn())
+    admin["dbname"] = admin.get("dbname") or "postgres"
+
+    with psycopg.connect(**admin, autocommit=True) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database_name,))
+        if cursor.fetchone() is not None:
+            return
+        cursor.execute(
+            f'CREATE DATABASE "{database_name.replace(chr(34), chr(34) * 2)}"'
+        )
+
+
 def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
     start_container(state)
     wait_for_http(state["base_url"])
@@ -302,6 +323,7 @@ def write_shims() -> None:
         "wikigo-comments": ["comments"],
         "wikigo-comments-scan": ["comments-scan"],
         "wikigo-create-document": ["create-document"],
+        "wikigo-page": ["page"],
     }
     for name, helper_args in shim_map.items():
         shim_path = SHIMS_ROOT / name
