@@ -89,3 +89,90 @@ def test_start_container_runs_wikigo_as_host_user(monkeypatch) -> None:
         "--user",
         "1001:1002",
     ]
+
+
+def test_ensure_runtime_database_creates_missing_database(monkeypatch) -> None:
+    executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class FakeCursor:
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed.append((query, params))
+
+        def fetchone(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setenv(
+        integration_harness.ADMIN_POSTGRES_DSN_ENV,
+        "postgresql://admin:admin@localhost:5432/postgres",
+    )
+    monkeypatch.setenv(
+        integration_harness.RUNTIME_POSTGRES_DSN_ENV,
+        "postgresql://integration:integration@localhost:5432/wiki_agent_integration",
+    )
+    monkeypatch.setattr(integration_harness.psycopg, "connect", lambda **kwargs: FakeConnection())
+
+    integration_harness.ensure_runtime_database()
+
+    assert executed == [
+        ("SELECT 1 FROM pg_database WHERE datname = %s", ("wiki_agent_integration",)),
+        ('CREATE DATABASE "wiki_agent_integration"', None),
+    ]
+
+
+def test_ensure_runtime_database_skips_existing_database(monkeypatch) -> None:
+    executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class FakeCursor:
+        def execute(self, query: str, params: tuple[object, ...] | None = None) -> None:
+            executed.append((query, params))
+
+        def fetchone(self):
+            return (1,)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setenv(
+        integration_harness.ADMIN_POSTGRES_DSN_ENV,
+        "postgresql://admin:admin@localhost:5432/postgres",
+    )
+    monkeypatch.setenv(
+        integration_harness.RUNTIME_POSTGRES_DSN_ENV,
+        "postgresql://integration:integration@localhost:5432/wiki_agent_integration",
+    )
+    monkeypatch.setattr(integration_harness.psycopg, "connect", lambda **kwargs: FakeConnection())
+
+    integration_harness.ensure_runtime_database()
+
+    assert executed == [
+        ("SELECT 1 FROM pg_database WHERE datname = %s", ("wiki_agent_integration",)),
+    ]
