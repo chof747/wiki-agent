@@ -29,6 +29,11 @@ BOT_PASSWORD = "marvin-pass"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
 CONTAINER_NAME = "wiki-agent-integration-harness"
+DEFAULT_ADMIN_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/postgres"
+DEFAULT_RUNTIME_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"
+ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
+RUNTIME_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_RUNTIME_DSN"
+WIKIGO_READY_TIMEOUT_SECONDS = 90.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,6 +111,8 @@ def run_test() -> None:
     env["PATH"] = f"{SHIMS_ROOT}:{env['PATH']}"
     env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
     env["WIKI_AGENT_INTEGRATION_CONFIG"] = str(WIKI_AGENT_CONFIG_PATH)
+    env[ADMIN_POSTGRES_DSN_ENV] = admin_postgres_dsn()
+    env[RUNTIME_POSTGRES_DSN_ENV] = runtime_postgres_dsn()
     result = subprocess.run(
         [
             "uv",
@@ -171,7 +178,7 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
         (
             f'bot_name = "{BOT_USERNAME}"\n\n'
             "[postgres]\n"
-            'dsn = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"\n\n'
+            f'dsn = "{runtime_postgres_dsn()}"\n\n'
             "[runner]\n"
             'command = ["wiki-agent-runner"]\n\n'
             "[service]\n"
@@ -192,6 +199,7 @@ def load_or_create_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
@@ -245,6 +253,14 @@ def helper_env(config_path: Path) -> dict[str, str]:
     return env
 
 
+def admin_postgres_dsn() -> str:
+    return os.environ.get(ADMIN_POSTGRES_DSN_ENV, DEFAULT_ADMIN_POSTGRES_DSN)
+
+
+def runtime_postgres_dsn() -> str:
+    return os.environ.get(RUNTIME_POSTGRES_DSN_ENV, DEFAULT_RUNTIME_POSTGRES_DSN)
+
+
 def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
     start_container(state)
     wait_for_http(state["base_url"])
@@ -261,12 +277,15 @@ def start_container(state: dict[str, Any]) -> None:
         if not container_running():
             run_docker(["start", CONTAINER_NAME])
         return
+    user = f"{os.getuid()}:{os.getgid()}"
     run_docker(
         [
             "run",
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--user",
+            user,
             "-p",
             f"{state['port']}:8080",
             "-v",
@@ -336,8 +355,9 @@ def container_running() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def wait_for_http(base_url: str, timeout_seconds: float = 30.0) -> None:
+def wait_for_http(base_url: str, timeout_seconds: float = WIKIGO_READY_TIMEOUT_SECONDS) -> None:
     deadline = time.time() + timeout_seconds
+    last_error: str | None = None
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(f"{base_url}/api/check-auth", timeout=2) as response:
@@ -346,11 +366,63 @@ def wait_for_http(base_url: str, timeout_seconds: float = 30.0) -> None:
         except urllib.error.HTTPError as exc:
             if exc.code in {200, 401}:
                 return
+            last_error = f"HTTP {exc.code}: {exc.reason}"
         except OSError:
+            last_error = "connection refused or timed out"
             time.sleep(0.5)
             continue
         time.sleep(0.5)
-    raise SystemExit(f"Wiki-Go did not become ready at {base_url}")
+    raise SystemExit(readiness_timeout_message(base_url, last_error))
+
+
+def readiness_timeout_message(base_url: str, last_error: str | None) -> str:
+    parts = [f"Wiki-Go did not become ready at {base_url}"]
+    if last_error:
+        parts.append(f"Last readiness probe error: {last_error}")
+    if container_exists():
+        parts.append(container_state_summary())
+        logs = container_logs()
+        if logs:
+            parts.append(f"Wiki-Go container logs:\n{logs}")
+    else:
+        parts.append(f"Wiki-Go container {CONTAINER_NAME} was not found")
+    return "\n\n".join(parts)
+
+
+def container_state_summary() -> str:
+    result = subprocess.run(
+        ["docker", "container", "inspect", CONTAINER_NAME],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return detail or f"unable to inspect {CONTAINER_NAME}"
+
+    payload = json.loads(result.stdout)
+    state = payload[0].get("State", {})
+    status = state.get("Status", "unknown")
+    exit_code = state.get("ExitCode", "unknown")
+    error = state.get("Error") or "none"
+    started_at = state.get("StartedAt", "unknown")
+    finished_at = state.get("FinishedAt", "unknown")
+    return (
+        f"Wiki-Go container state: status={status}, exit_code={exit_code}, "
+        f"error={error}, started_at={started_at}, finished_at={finished_at}"
+    )
+
+
+def container_logs() -> str:
+    result = subprocess.run(
+        ["docker", "logs", "--tail", "200", CONTAINER_NAME],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
 
 
 def can_login(base_url: str, username: str, password: str) -> bool:
