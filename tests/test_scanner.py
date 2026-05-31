@@ -9,7 +9,7 @@ from wiki_agent.config import load_config
 from wiki_agent.scanner import Scanner, ScannerError
 
 
-def test_scanner_dry_run_accepts_matches_summary_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scanner_scan_accepts_matches_summary_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     config = load_config(Path(__file__).parent / "fixtures" / "config.toml")
     scanner = Scanner(config)
 
@@ -52,7 +52,7 @@ def test_scanner_dry_run_accepts_matches_summary_payload(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    events = scanner.dry_run()
+    events = scanner.scan()
 
     assert [event.as_dict() for event in events] == [
         {
@@ -68,7 +68,7 @@ def test_scanner_dry_run_accepts_matches_summary_payload(monkeypatch: pytest.Mon
     ]
 
 
-def test_scanner_dry_run_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scanner_scan_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     config = load_config(Path(__file__).parent / "fixtures" / "config.toml")
     scanner = Scanner(config)
 
@@ -78,4 +78,4 @@ def test_scanner_dry_run_raises_on_invalid_json(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     with pytest.raises(ScannerError, match="invalid JSON"):
-        scanner.dry_run()
+        scanner.scan()

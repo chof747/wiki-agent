@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 from wiki_agent.app import WikiAgentApp
 from wiki_agent.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
 from wiki_agent.config import load_config
-from wiki_agent.scanner import CommentEvent
+from wiki_agent.scanner import CommentEvent, ScannerError
 
 
 def test_repository_ensure_schema_runs_idempotent_ddl() -> None:
@@ -201,9 +202,45 @@ def test_run_once_scans_and_enqueues_before_worker() -> None:
     cycle = app.run_comment_agent_cycle()
 
     assert repository.schema_ensured is True
+    assert scanner.scan_calls == 1
     assert [event.comment_identity for event in repository.enqueued] == ["comment-1", "comment-2"]
     assert worker.run_calls == 1
     assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
+
+
+def test_run_once_dry_run_scans_once_and_emits_comment_events(capsys) -> None:  # type: ignore[no-untyped-def]
+    config = load_config(_fixture_config_path())
+    repository = FakeRepository()
+    worker = FakeWorker()
+    scanner = FakeScanner([_event(comment_identity="comment-1"), _event(comment_identity="comment-2")])
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 0
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "comment_events": [event.as_dict() for event in scanner._events]
+    }
+
+
+def test_run_once_dry_run_handles_scan_error_without_schema_or_worker() -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeRepository()
+    worker = FakeWorker()
+    scanner = FakeScanner(error=ScannerError("boom"))
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 1
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
 
 
 def _event(
@@ -267,10 +304,20 @@ class FakeWorker:
 
 
 class FakeScanner:
-    def __init__(self, events: list[CommentEvent]) -> None:
-        self._events = events
+    def __init__(
+        self,
+        events: list[CommentEvent] | None = None,
+        *,
+        error: ScannerError | None = None,
+    ) -> None:
+        self._events = events or []
+        self._error = error
+        self.scan_calls = 0
 
     def scan(self) -> list[CommentEvent]:
+        self.scan_calls += 1
+        if self._error is not None:
+            raise self._error
         return list(self._events)
 
 
