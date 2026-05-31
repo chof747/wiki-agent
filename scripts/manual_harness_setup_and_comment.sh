@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 PAGE_PATH="${PAGE_PATH:-__tests__/scanner-dry-run/eligible}"
 MANUAL_HARNESS_POSTGRES_DSN="${MANUAL_HARNESS_POSTGRES_DSN:-postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent}"
+MANUAL_HARNESS_ADMIN_POSTGRES_DSN="${MANUAL_HARNESS_ADMIN_POSTGRES_DSN:-$MANUAL_HARNESS_POSTGRES_DSN}"
 RESET_COMMENT_JOBS="${RESET_COMMENT_JOBS:-1}"
 COMMENT_TEXT="${COMMENT_TEXT:-@marvin # Eligible Fixture
 
@@ -13,7 +14,9 @@ Updated by manual harness test.
 }"
 ADMIN_CONFIG="$ROOT_DIR/.runtime/integration-harness/wikigo-admin-config.json"
 
-env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration reset
+WIKI_AGENT_INTEGRATION_ADMIN_DSN="$MANUAL_HARNESS_ADMIN_POSTGRES_DSN" \
+WIKI_AGENT_INTEGRATION_RUNTIME_DSN="$MANUAL_HARNESS_POSTGRES_DSN" \
+  env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration reset
 
 export PATH="$ROOT_DIR/.runtime/integration-harness/bin:$PATH"
 
