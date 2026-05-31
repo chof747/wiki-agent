@@ -9,6 +9,7 @@ from wiki_agent.app import WikiAgentApp
 from wiki_agent.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
 from wiki_agent.config import load_config
 from wiki_agent.scanner import CommentEvent, ScannerError
+from wiki_agent.worker import WorkerRunResult
 
 
 def test_repository_ensure_schema_runs_idempotent_ddl() -> None:
@@ -206,6 +207,7 @@ def test_run_once_scans_and_enqueues_before_worker() -> None:
     assert [event.comment_identity for event in repository.enqueued] == ["comment-1", "comment-2"]
     assert worker.run_calls == 1
     assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
+    assert cycle.worker_run_result == worker.result
 
 
 def test_run_once_dry_run_scans_once_and_emits_comment_events(capsys) -> None:  # type: ignore[no-untyped-def]
@@ -298,9 +300,11 @@ class FakeRepository:
 class FakeWorker:
     def __init__(self) -> None:
         self.run_calls = 0
+        self.result = WorkerRunResult(invocation=None)
 
-    def run_once(self) -> None:
+    def run_once(self) -> WorkerRunResult:
         self.run_calls += 1
+        return self.result
 
 
 class FakeScanner:

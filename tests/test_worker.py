@@ -6,7 +6,7 @@ from pathlib import Path
 from wiki_agent.comment_jobs import CommentJob
 from wiki_agent.config import load_config
 from wiki_agent.runner_client import RunnerInvocationError, RunnerResponse
-from wiki_agent.worker import Worker
+from wiki_agent.worker import InvocationOutcome, Worker, WorkerRunResult
 
 
 def test_worker_claims_job_and_persists_runner_status() -> None:
@@ -14,8 +14,15 @@ def test_worker_claims_job_and_persists_runner_status() -> None:
     runner_client = FakeRunnerClient(response=RunnerResponse(status="DELETE_FAILED", payload={"status": "DELETE_FAILED"}, stderr="diagnostic\n"))
 
     worker = Worker(_config(), repository=repository, runner_client=runner_client)
-    worker.run_once()
+    result = worker.run_once()
 
+    assert result == WorkerRunResult(
+        invocation=InvocationOutcome(
+            job=repository.updated_jobs[-1],
+            status="DELETE_FAILED",
+            error_detail="diagnostic",
+        )
+    )
     assert repository.claimed is True
     assert repository.updated == [(1, "DELETE_FAILED", "diagnostic")]
     assert runner_client.jobs == [_job()]
@@ -26,8 +33,15 @@ def test_worker_maps_runner_invocation_failure_to_update_failed() -> None:
     runner_client = FakeRunnerClient(error=RunnerInvocationError("runner emitted invalid JSON on stdout"))
 
     worker = Worker(_config(), repository=repository, runner_client=runner_client)
-    worker.run_once()
+    result = worker.run_once()
 
+    assert result == WorkerRunResult(
+        invocation=InvocationOutcome(
+            job=repository.updated_jobs[-1],
+            status="UPDATE_FAILED",
+            error_detail="runner emitted invalid JSON on stdout",
+        )
+    )
     assert repository.updated == [(1, "UPDATE_FAILED", "runner emitted invalid JSON on stdout")]
 
 
@@ -36,8 +50,9 @@ def test_worker_noops_when_queue_is_empty() -> None:
     runner_client = FakeRunnerClient(response=RunnerResponse(status="SUCCESS", payload={"status": "SUCCESS"}, stderr=""))
 
     worker = Worker(_config(), repository=repository, runner_client=runner_client)
-    worker.run_once()
+    result = worker.run_once()
 
+    assert result == WorkerRunResult(invocation=None)
     assert repository.updated == []
     assert runner_client.jobs == []
 
@@ -71,6 +86,7 @@ class FakeRepository:
         self._job = job
         self.claimed = False
         self.updated: list[tuple[int, str, str | None]] = []
+        self.updated_jobs: list[CommentJob] = []
 
     def claim_next_queued(self) -> CommentJob | None:
         self.claimed = True
@@ -87,7 +103,24 @@ class FakeRepository:
         self.updated.append((job_id, status, error_detail))
         if self._job is None:
             raise AssertionError("update_job_status should not run without a claimed job")
-        return self._job
+        updated_job = CommentJob(
+            id=self._job.id,
+            source_system=self._job.source_system,
+            comment_identity=self._job.comment_identity,
+            target_page=self._job.target_page,
+            original_comment_text=self._job.original_comment_text,
+            prompt=self._job.prompt,
+            source_metadata=self._job.source_metadata,
+            status=status,
+            receipt_count=self._job.receipt_count,
+            first_scanned_at=self._job.first_scanned_at,
+            last_scanned_at=self._job.last_scanned_at,
+            claimed_at=self._job.claimed_at,
+            completed_at=completed_at,
+            error_detail=error_detail,
+        )
+        self.updated_jobs.append(updated_job)
+        return updated_job
 
 
 class FakeRunnerClient:

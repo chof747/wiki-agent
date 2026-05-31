@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
 from wiki_agent.scanner import Scanner, ScannerError
-from wiki_agent.worker import Worker
+from wiki_agent.worker import Worker, WorkerRunResult
 
 if TYPE_CHECKING:
-    from wiki_agent.scanner import CommentEvent
     from wiki_agent.comment_jobs import EnqueueResult
+    from wiki_agent.scanner import CommentEvent
 
 
 LOGGER = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CommentAgentCycle:
     enqueue_results: list["EnqueueResult"]
+    worker_run_result: WorkerRunResult
 
 
 class WikiAgentApp:
@@ -84,8 +85,11 @@ class WikiAgentApp:
         self._repository.ensure_schema()
         enqueue_results = [self._repository.enqueue_event(event) for event in comment_events]
         _log_enqueue_summary(enqueue_results)
-        self._worker.run_once()
-        return CommentAgentCycle(enqueue_results=enqueue_results)
+        worker_run_result = self._worker.run_once()
+        return CommentAgentCycle(
+            enqueue_results=enqueue_results,
+            worker_run_result=worker_run_result,
+        )
 
     def _emit_dry_run_output(self, comment_events: list["CommentEvent"]) -> None:
         json.dump(
