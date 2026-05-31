@@ -3,12 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from wiki_agent.config import AppConfig
-
-if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import CommentJobRepository, EnqueueResult
 
 
 class ScannerError(RuntimeError):
@@ -33,25 +30,34 @@ class CommentEvent:
         }
 
 
+class CommentScanAdapter(Protocol):
+    def scan_records(self) -> list[object]: ...
+
+
+class WikiGoCommentScanAdapter(CommentScanAdapter):
+    def scan_records(self) -> list[object]:
+        return _parse_helper_output(_run_scan_helper())
+
+
 class Scanner:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        scan_adapter: CommentScanAdapter | None = None,
+    ) -> None:
         self._config = config
         self._bot_mention = f"@{config.bot_name}"
+        self._scan_adapter = scan_adapter or WikiGoCommentScanAdapter()
 
     def scan(self) -> list[CommentEvent]:
-        records = _parse_helper_output(_run_scan_helper())
+        records = self._scan_adapter.scan_records()
         events: list[CommentEvent] = []
         for record in records:
             event = self._normalize_record(record)
             if event is not None:
                 events.append(event)
         return events
-
-    def enqueue(self, repository: "CommentJobRepository") -> list["EnqueueResult"]:
-        results: list[EnqueueResult] = []
-        for event in self.scan():
-            results.append(repository.enqueue_event(event))
-        return results
 
     def _normalize_record(self, record: object) -> CommentEvent | None:
         if not isinstance(record, dict):
