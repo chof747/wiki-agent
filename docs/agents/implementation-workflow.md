@@ -169,6 +169,9 @@ This repo uses one canonical workflow with conditional branches.
 9. For runtime issues that touch the Scanner, Worker, Runner, Postgres Comment Job lifecycle, or Wiki-Go mutation flow, the implementer must explicitly assess harness impact before coding.
 10. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
 11. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
+12. Tests must prove observable behavior or a stable module contract, not just that one method forwards to another.
+13. Do not rely only on subclass overrides, mocks, or stubs unless the test still asserts a user-visible or boundary-level effect.
+14. If a test would pass with a forwarding stub, strengthen it or document the gap in the HIL review.
 
 If scope must split:
 
@@ -183,7 +186,10 @@ Documentation is part of implementation, not cleanup.
 1. If behavior changes, update the relevant user-facing or operator-facing docs in the same branch.
 2. If domain language changes, update `CONTEXT.md` before or during implementation.
 3. If the change introduces a hard-to-reverse, surprising architectural trade-off, stop for HIL and then add or update an ADR in `docs/adr/`.
-4. If no docs changed, the HIL review packet must explicitly state why no doc updates were needed.
+4. Persistent docs must describe steady-state behavior, contracts, and accepted design, not issue-specific implementation history.
+5. Persistent docs must not reference issue numbers, branch names, or transitional refactor rationale unless the repo explicitly treats that document as change history.
+6. If change provenance matters, put it in the issue, PR, commit message, or ADR instead of user-facing or operator-facing steady-state docs.
+7. If no docs changed, the HIL review packet must explicitly state why no doc updates were needed.
 
 ## 12. Local Verification Baseline
 
