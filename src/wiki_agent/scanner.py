@@ -38,9 +38,6 @@ class Scanner:
         self._config = config
         self._bot_mention = f"@{config.bot_name}"
 
-    def dry_run(self) -> list[CommentEvent]:
-        return self.scan()
-
     def scan(self) -> list[CommentEvent]:
         records = _parse_helper_output(_run_scan_helper())
         events: list[CommentEvent] = []
