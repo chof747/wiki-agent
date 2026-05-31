@@ -31,7 +31,7 @@ def test_repository_ensure_schema_runs_idempotent_ddl() -> None:
     ]
 
 
-def test_repository_enqueue_refreshes_duplicate_without_second_row() -> None:
+def test_repository_enqueue_refreshes_queued_duplicate_without_second_row() -> None:
     database = FakeDatabase()
     repository = CommentJobRepository(
         "postgresql://example:test@localhost:5432/wiki_agent",
@@ -67,6 +67,43 @@ def test_repository_enqueue_refreshes_duplicate_without_second_row() -> None:
     assert row["source_metadata"]["edit_count"] == 2
 
 
+def test_repository_enqueue_keeps_processing_snapshot_stable() -> None:
+    database = FakeDatabase()
+    repository = CommentJobRepository(
+        "postgresql://example:test@localhost:5432/wiki_agent",
+        connect=database.connect,
+    )
+    first_seen = datetime(2026, 5, 24, 20, 0, tzinfo=UTC)
+    second_seen = first_seen + timedelta(minutes=5)
+
+    inserted = repository.enqueue_event(
+        _event(comment_identity="comment-1", prompt="tighten intro"),
+        scanned_at=first_seen,
+    )
+    repository.claim_next_queued(claimed_at=first_seen + timedelta(minutes=1))
+    refreshed = repository.enqueue_event(
+        _event(
+            comment_identity="comment-1",
+            prompt="tighten intro again",
+            original_comment_text="@marvin tighten intro again",
+            source_metadata={"source_system": "wiki-go", "author": "alice", "edit_count": 2},
+        ),
+        scanned_at=second_seen,
+    )
+
+    assert inserted.action == "inserted"
+    assert refreshed.action == "receipt_refreshed"
+    assert len(database.rows) == 1
+    row = database.rows[0]
+    assert row["status"] == "processing"
+    assert row["receipt_count"] == 2
+    assert row["first_scanned_at"] == first_seen
+    assert row["last_scanned_at"] == second_seen
+    assert row["prompt"] == "tighten intro"
+    assert row["original_comment_text"] == "@marvin tighten intro"
+    assert row["source_metadata"] == {"source_system": "wiki-go", "author": "alice"}
+
+
 def test_repository_enqueue_keeps_terminal_job_terminal() -> None:
     database = FakeDatabase()
     repository = CommentJobRepository(
@@ -89,7 +126,7 @@ def test_repository_enqueue_keeps_terminal_job_terminal() -> None:
     assert row["status"] == "UPDATE_FAILED"
     assert row["receipt_count"] == 2
     assert row["last_scanned_at"] == second_seen
-    assert row["prompt"] == "retry this"
+    assert row["prompt"] == "tighten intro"
 
 
 def test_repository_claims_queued_jobs_in_fifo_order() -> None:
@@ -329,6 +366,13 @@ class FakeCursor:
             row["source_metadata"] = _unwrap_json_param(params[3])
             row["receipt_count"] += 1
             row["last_scanned_at"] = params[4]
+            self._result = [_row_tuple(row)]
+            return
+        if query.startswith("UPDATE comment_jobs SET receipt_count = receipt_count + 1,"):
+            assert params is not None
+            row = _find_row(self._database.rows, params[1])
+            row["receipt_count"] += 1
+            row["last_scanned_at"] = params[0]
             self._result = [_row_tuple(row)]
             return
         if query.startswith("SELECT id FROM comment_jobs WHERE status = 'queued'"):

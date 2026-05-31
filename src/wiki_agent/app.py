@@ -105,6 +105,7 @@ class WikiAgentApp:
 def _log_enqueue_summary(results: list["EnqueueResult"]) -> None:
     inserted = sum(1 for result in results if result.action == "inserted")
     refreshed = sum(1 for result in results if result.action == "refreshed")
+    receipt_refreshed = sum(1 for result in results if result.action == "receipt_refreshed")
     skipped_terminal = sum(1 for result in results if result.action == "skipped_terminal")
     LOGGER.info(
         "Scanner enqueue pass completed.",
@@ -113,6 +114,7 @@ def _log_enqueue_summary(results: list["EnqueueResult"]) -> None:
             "eligible_comment_events": len(results),
             "inserted_jobs": inserted,
             "refreshed_jobs": refreshed,
+            "receipt_refreshed_jobs": receipt_refreshed,
             "skipped_terminal_jobs": skipped_terminal,
         },
     )

@@ -165,7 +165,9 @@ _Avoid_: test processing
 - Cross-page and multi-page requests are rejected with a **Rejection Comment**.
 - Each **Comment Event** maps to one canonical **Comment Job**.
 - The **Idempotency Key** is `source_system + comment_identity`.
-- Duplicate scanner discoveries update receipt metadata only and do not create additional processing rows.
+- Duplicate scanner discoveries do not create additional processing rows.
+- Duplicate discovery updates the executable snapshot (`target_page`, original comment text, stripped prompt, source metadata) while the job remains `queued`.
+- Duplicate discovery updates receipt metadata only after the job is `processing` or reaches a terminal status.
 - **Comment Jobs** are stored in Postgres and retained indefinitely for the first version.
 - Postgres is the durable queue and operational state store, not the source of truth for page reconciliation.
 - The Postgres schema is created with simple idempotent startup DDL.
