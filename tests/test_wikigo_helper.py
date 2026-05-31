@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from tools import wikigo_helper
+from wiki_agent import wikigo_helper
 
 
 def test_page_get_reads_source_endpoint_and_emits_markdown(monkeypatch, capsys) -> None:
