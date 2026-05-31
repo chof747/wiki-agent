@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from tools.wikigo_helper import (
+from wiki_agent.wikigo_helper import (
     WikiGoSession,
     extract_markdown,
     load_runtime_config,
