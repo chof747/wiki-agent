@@ -198,12 +198,12 @@ def test_run_once_scans_and_enqueues_before_worker() -> None:
     scanner = FakeScanner([_event(comment_identity="comment-1"), _event(comment_identity="comment-2")])
     app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
 
-    result = app.run_once(dry_run=False)
+    cycle = app.run_comment_agent_cycle()
 
-    assert result == 0
     assert repository.schema_ensured is True
     assert [event.comment_identity for event in repository.enqueued] == ["comment-1", "comment-2"]
     assert worker.run_calls == 1
+    assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
 
 
 def _event(

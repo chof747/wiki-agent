@@ -30,6 +30,22 @@ Its main runtime components are:
 
 ## Responsibilities
 
+`WikiAgentApp` is the app-owned coordinator for one **Comment Agent** cycle. One cycle currently means:
+
+- ensure the internal Postgres schema exists
+- run one **Scanner** pass
+- persist or refresh eligible **Comment Jobs**
+- hand off once to the **Worker**
+
+That seam is intentionally narrower than the full future service runtime. It centralizes one deterministic non-dry-run cycle in the app module without yet changing the long-running service loop into the full scheduled scanner described by ADR 0002.
+
+Within that boundary, responsibilities are:
+
+- `WikiAgentApp`: own service lifecycle and compose one **Comment Agent** cycle
+- `Scanner`: discover and normalize eligible source comments
+- `Worker`: claim at most one queued job and supervise exactly one **Invocation**
+- CLI wiring: load config, configure logging, and manage process signals
+
 The **Scanner** is responsible for discovery and enqueueing:
 
 - read comments through Wiki-Go helper commands
@@ -65,7 +81,7 @@ The **Runner** is responsible for execution against Wiki-Go:
 
 The current implementation supports a scanner-only dry-run at `wiki-agent run-once --dry-run`. That path performs one non-mutating **Scanner** pass, emits normalized eligible **Comment Event** data to stdout as structured JSON, and does not write **Comment Jobs**, invoke the **Runner**, or mutate Wiki-Go.
 
-Without `--dry-run`, the current implementation performs one **Scanner** pass, ensures the internal Postgres schema exists, persists or refreshes eligible **Comment Jobs**, then enters the **Worker** boundary once before exiting.
+Without `--dry-run`, the current implementation executes one app-owned **Comment Agent** cycle before exiting.
 
 ## Configuration Model
 

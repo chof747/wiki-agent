@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from wiki_agent.comment_jobs import CommentJobRepository
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CommentAgentCycle:
+    enqueue_results: list["EnqueueResult"]
 
 
 class WikiAgentApp:
@@ -45,6 +51,13 @@ class WikiAgentApp:
             extra={"event": "service.stopped"},
         )
         return 0
+
+    def run_comment_agent_cycle(self) -> CommentAgentCycle:
+        self._repository.ensure_schema()
+        enqueue_results = [self._repository.enqueue_event(event) for event in self._scanner.scan()]
+        _log_enqueue_summary(enqueue_results)
+        self._worker.run_once()
+        return CommentAgentCycle(enqueue_results=enqueue_results)
 
     def run_once(self, *, dry_run: bool = False) -> int:
         LOGGER.info(
@@ -77,20 +90,13 @@ class WikiAgentApp:
             return_code = 0
         else:
             try:
-                self._repository.ensure_schema()
-                enqueue_results = [
-                    self._repository.enqueue_event(event)
-                    for event in self._scanner.scan()
-                ]
+                self.run_comment_agent_cycle()
             except ScannerError as exc:
                 LOGGER.error(
                     "Scanner enqueue pass failed.",
                     extra={"event": "scanner.enqueue_failed", "error": str(exc)},
                 )
                 return 1
-
-            _log_enqueue_summary(enqueue_results)
-            self._worker.run_once()
             return_code = 0
         LOGGER.info(
             "Wiki Agent one-shot execution finished.",
