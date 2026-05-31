@@ -12,6 +12,10 @@ Canonical triage roles map directly to same-name labels (`needs-triage`, `needs-
 
 This repo is single-context: read root `CONTEXT.md` and root `docs/adr/`. See `docs/agents/domain.md`.
 
+### Strategic programming
+
+For any repo change, apply the principles and follow `docs/agents/strategic-programming.md`.
+
 ### Implementation workflow
 
 For any repo change, follow `docs/agents/implementation-workflow.md`.
