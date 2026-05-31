@@ -153,8 +153,7 @@ error_detail""",
                 return EnqueueResult(action="inserted", job=_deserialize_job(row))
 
             job_id, status, _receipt_count = existing
-            cursor.execute(
-                """UPDATE comment_jobs SET target_page = %s,
+            update_query = """UPDATE comment_jobs SET target_page = %s,
 original_comment_text = %s,
 prompt = %s,
 source_metadata = %s,
@@ -175,19 +174,47 @@ first_scanned_at,
 last_scanned_at,
 claimed_at,
 completed_at,
+error_detail"""
+            action = "refreshed"
+
+            if status == "queued":
+                cursor.execute(
+                    update_query,
+                    (
+                        event.target_page,
+                        event.original_comment_text,
+                        event.prompt,
+                        Jsonb(event.source_metadata),
+                        observed_at,
+                        job_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """UPDATE comment_jobs SET receipt_count = receipt_count + 1,
+last_scanned_at = %s
+WHERE id = %s
+RETURNING
+id,
+source_system,
+comment_identity,
+target_page,
+original_comment_text,
+prompt,
+source_metadata,
+status,
+receipt_count,
+first_scanned_at,
+last_scanned_at,
+claimed_at,
+completed_at,
 error_detail""",
-                (
-                    event.target_page,
-                    event.original_comment_text,
-                    event.prompt,
-                    Jsonb(event.source_metadata),
-                    observed_at,
-                    job_id,
-                ),
-            )
+                    (observed_at, job_id),
+                )
+                action = "skipped_terminal" if status in TERMINAL_STATUSES else "receipt_refreshed"
+
             row = cursor.fetchone()
             connection.commit()
-            action = "skipped_terminal" if status in TERMINAL_STATUSES else "refreshed"
             return EnqueueResult(action=action, job=_deserialize_job(row))
 
     def claim_next_queued(self, *, claimed_at: datetime | None = None) -> CommentJob | None:
