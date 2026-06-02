@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Scheduled Wiki-Go comment agent service skeleton."
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "openai>=1.0.0",
     "psycopg[binary]>=3.3.4",
 ]
 
@@ -31,3 +32,6 @@ addopts = "-m 'not integration'"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wiki_agent", "tools"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/wiki_agent/prompts/page_update_prompt.md" = "wiki_agent/prompts/page_update_prompt.md"
