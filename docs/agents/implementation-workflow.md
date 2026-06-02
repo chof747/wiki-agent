@@ -167,11 +167,14 @@ This repo uses one canonical workflow with conditional branches.
 7. If implementation reveals more than one independently shippable outcome, stop and split scope.
 8. If the repo defines a canonical integration harness for a runtime boundary, future runtime work must extend that harness rather than introduce a parallel setup flow unless a human explicitly approves replacing it.
 9. For runtime issues that touch the Scanner, Worker, Runner, Postgres Comment Job lifecycle, or Wiki-Go mutation flow, the implementer must explicitly assess harness impact before coding.
-10. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
-11. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
-12. Tests must prove observable behavior or a stable module contract, not just that one method forwards to another.
-13. Do not rely only on subclass overrides, mocks, or stubs unless the test still asserts a user-visible or boundary-level effect.
-14. If a test would pass with a forwarding stub, strengthen it or document the gap in the HIL review.
+10. Before coding a runtime-boundary change that depends on an external SDK, CLI, config contract, runtime-loaded package resource, or local dependency assumption, the implementer must run explicit boundary probes and record the outcome in working notes or the HIL packet.
+11. The required probes are only the smallest checks needed to collapse uncertainty in the path of the work, such as import or install availability, external contract shape, required helper-command surface, harness seam availability, or runtime-loaded resource presence.
+12. If a boundary probe fails or reveals contract ambiguity, stop before implementation and ask for HIL or issue refinement instead of discovering the boundary mid-patch.
+13. If the issue scope makes harness extension possible, the same branch must extend harness coverage.
+14. If harness extension is not yet possible, stop and record the blocker in the HIL review packet and linked issue follow-up. Acceptable blockers are limited to missing helper-command surface, missing fixture/seeding seam, or an intentionally earlier issue slice approved by a human.
+15. Tests must prove observable behavior or a stable module contract, not just that one method forwards to another.
+16. Do not rely only on subclass overrides, mocks, or stubs unless the test still asserts a user-visible or boundary-level effect.
+17. If a test would pass with a forwarding stub, strengthen it or document the gap in the HIL review.
 
 If scope must split:
 
