@@ -121,6 +121,17 @@ def test_run_once_smoke(tmp_path: Path) -> None:
             "wikigo-comments-scan is not available; run the integration harness or add the helper to PATH"
         )
 
+    if helper_path.exists():
+        reset = subprocess.run(
+            ["uv", "run", "wiki-agent-integration", "reset"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=os.environ.copy(),
+        )
+        if reset.returncode != 0:
+            pytest.skip(f"integration harness reset failed: {reset.stderr or reset.stdout}")
+
     with psycopg.connect(postgres_dsn) as connection, connection.cursor() as cursor:
         cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
         connection.commit()
