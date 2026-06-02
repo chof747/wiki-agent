@@ -116,8 +116,10 @@ The repo currently provides:
 - durable enqueueing that preserves one canonical job per `source_system + comment_identity`
 - a **Worker** path that claims one queued job, invokes the external **Runner**, and persists one finalized terminal status
 - a language-agnostic **Runner** subprocess boundary using stdin for the **Prompt Envelope**, stdout for exactly one finalized **Response**, and stderr for diagnostics
-- an in-repo `wiki-agent-runner` executable for successful single-page update flows using `wikigo-page` and `wikigo-comments`
+- an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and applies the confirmed single-page update using `wikigo-page` and `wikigo-comments`
 - smoke and config tests
+
+Provider credentials and model selection stay outside the main app config. They are supplied through the **Runner** environment, keeping the app-owned configuration provider-agnostic.
 
 ## Deferred Work
 
@@ -133,3 +135,4 @@ The following behaviors are intentionally deferred to later issues:
 - [ADR 0001](../adr/0001-comment-driven-stateless-reconciliation.md)
 - [ADR 0002](../adr/0002-scheduled-comment-agent-with-durable-jobs.md)
 - [Integration Harness](./integration-harness.md)
+- [OpenAI Runner Setup](../operators/openai-runner-setup.md)

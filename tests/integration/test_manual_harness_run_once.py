@@ -27,12 +27,14 @@ def test_run_once_updates_page_and_deletes_source_comment(tmp_path: Path) -> Non
 
     env = os.environ.copy()
     env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
+    fake_runner_path = _write_fake_runner(tmp_path / "fake-runner")
 
     try:
         _delete_all_comments(PAGE_PATH, runtime_config=admin_config_path, env=env)
         _post_comment(PAGE_PATH, COMMENT_TEXT, runtime_config=admin_config_path, env=env, tmp_path=tmp_path)
 
         run_env = _helper_env(runtime_config=bot_config_path, env=env)
+        run_env["WIKI_AGENT_RUNNER_COMMAND_JSON"] = json.dumps([str(fake_runner_path)])
         result = subprocess.run(
             [script, "run-once", "--config", str(config_path)],
             cwd=REPO_ROOT,
@@ -125,3 +127,45 @@ def _require_env(name: str) -> str:
 
 def _require_path_env(name: str) -> Path:
     return Path(_require_env(name))
+
+
+def _write_fake_runner(path: Path) -> Path:
+    path.write_text(
+        (
+            "#!/usr/bin/env python3\n"
+            "import json\n"
+            "import pathlib\n"
+            "import subprocess\n"
+            "import sys\n"
+            "import tempfile\n"
+            "\n"
+            "envelope = json.load(sys.stdin)\n"
+            "target_page = envelope['target_page']\n"
+            "comment_identity = envelope['comment_identity']\n"
+            "updated_markdown = '# Eligible Fixture\\n\\nUpdated by manual harness test.\\n'\n"
+            "subprocess.run(['wikigo-page', 'get', target_page], check=True, capture_output=True, text=True)\n"
+            "with tempfile.NamedTemporaryFile('w', encoding='utf-8', suffix='.md', delete=False) as handle:\n"
+            "    handle.write(updated_markdown)\n"
+            "    temp_path = pathlib.Path(handle.name)\n"
+            "try:\n"
+            "    subprocess.run(['wikigo-page', 'save', target_page, str(temp_path)], check=True, capture_output=True, text=True)\n"
+            "finally:\n"
+            "    temp_path.unlink(missing_ok=True)\n"
+            "confirmed = subprocess.run(['wikigo-page', 'get', target_page], check=True, capture_output=True, text=True)\n"
+            "if json.loads(confirmed.stdout)['markdown'] != updated_markdown:\n"
+            "    sys.stdout.write(json.dumps({'status': 'UPDATE_FAILED', 'error_code': 'UPDATE_CONFIRMATION_FAILED', 'message': 'saved page content did not match confirmation fetch'}))\n"
+            "    sys.stdout.write('\\n')\n"
+            "    raise SystemExit(0)\n"
+            "subprocess.run(['wikigo-comments', 'delete', comment_identity, target_page], check=True, capture_output=True, text=True)\n"
+            "remaining = subprocess.run(['wikigo-comments', 'list', target_page], check=True, capture_output=True, text=True)\n"
+            "if any(comment.get('id') == comment_identity for comment in json.loads(remaining.stdout)):\n"
+            "    sys.stdout.write(json.dumps({'status': 'DELETE_FAILED', 'error_code': 'DELETE_CONFIRMATION_FAILED', 'message': 'source comment still present after delete confirmation'}))\n"
+            "    sys.stdout.write('\\n')\n"
+            "    raise SystemExit(0)\n"
+            "sys.stdout.write(json.dumps({'status': 'SUCCESS'}))\n"
+            "sys.stdout.write('\\n')\n"
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
