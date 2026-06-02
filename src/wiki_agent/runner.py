@@ -43,6 +43,26 @@ class ModelOutputError(ValueError):
 
 
 @dataclass(frozen=True)
+class RunnerSettings:
+    openai_model: str
+    max_input_bytes: int
+    max_output_bytes: int
+    model_timeout_seconds: float
+
+    @classmethod
+    def from_env(cls) -> "RunnerSettings":
+        return cls(
+            openai_model=_read_non_empty_string_env("WIKI_AGENT_RUNNER_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+            max_input_bytes=_read_positive_int_env("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", DEFAULT_MAX_INPUT_BYTES),
+            max_output_bytes=_read_positive_int_env("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES),
+            model_timeout_seconds=_read_positive_float_env(
+                "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
+                DEFAULT_MODEL_TIMEOUT_SECONDS,
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class RunnerEnvelope:
     prompt: str
     original_comment_text: str
@@ -82,6 +102,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
+        settings = RunnerSettings.from_env()
+    except RunnerContractError as exc:
+        _emit_response("UPDATE_FAILED", "RUNNER_CONFIG_INVALID", str(exc))
+        return 0
+
+    try:
         current_page_content = _read_page(envelope.target_page)
     except HelperCommandError as exc:
         _emit_response("UPDATE_FAILED", "PAGE_READ_FAILED", str(exc))
@@ -99,12 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response("UPDATE_FAILED", "PROMPT_TEMPLATE_INVALID", str(exc))
         return 0
 
-    if _utf8_len(rendered_prompt) > _max_input_bytes():
+    if _utf8_len(rendered_prompt) > settings.max_input_bytes:
         _emit_response("UPDATE_FAILED", "INPUT_TOO_LARGE", "rendered model input exceeded byte limit")
         return 0
 
     try:
-        final_page_content = _generate_final_page_content(rendered_prompt)
+        final_page_content = _generate_final_page_content(rendered_prompt, settings)
     except ModelOutputError as exc:
         _emit_response("UPDATE_FAILED", "MODEL_OUTPUT_INVALID", str(exc))
         return 0
@@ -112,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response("UPDATE_FAILED", "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
-    if _utf8_len(final_page_content) > _max_output_bytes():
+    if _utf8_len(final_page_content) > settings.max_output_bytes:
         _emit_response("UPDATE_FAILED", "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
         return 0
 
@@ -187,12 +213,12 @@ def render_prompt(
     return pattern.sub(lambda match: replacements[match.group(0)], template)
 
 
-def _generate_final_page_content(rendered_prompt: str) -> str:
+def _generate_final_page_content(rendered_prompt: str, settings: RunnerSettings) -> str:
     from openai import OpenAI
 
-    client = OpenAI(timeout=_model_timeout_seconds())
+    client = OpenAI(timeout=settings.model_timeout_seconds)
     response = client.responses.create(
-        model=os.getenv("WIKI_AGENT_RUNNER_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        model=settings.openai_model,
         input=[
             {
                 "role": "system",
@@ -253,9 +279,12 @@ def _validate_model_payload(payload: object) -> str:
 
 
 def _load_prompt_template() -> str:
-    return resources.files(PROMPT_TEMPLATE_PACKAGE).joinpath(PROMPT_TEMPLATE_RESOURCE).read_text(
-        encoding="utf-8"
-    )
+    try:
+        return resources.files(PROMPT_TEMPLATE_PACKAGE).joinpath(PROMPT_TEMPLATE_RESOURCE).read_text(
+            encoding="utf-8"
+        )
+    except (FileNotFoundError, ModuleNotFoundError, OSError) as exc:
+        raise PromptTemplateError("failed to load prompt template resource") from exc
 
 
 def _read_page(target_page: str) -> str:
@@ -350,21 +379,6 @@ def _utf8_len(value: str) -> int:
     return len(value.encode("utf-8"))
 
 
-def _max_input_bytes() -> int:
-    return _read_positive_int_env("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", DEFAULT_MAX_INPUT_BYTES)
-
-
-def _max_output_bytes() -> int:
-    return _read_positive_int_env("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES)
-
-
-def _model_timeout_seconds() -> float:
-    return _read_positive_float_env(
-        "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
-        DEFAULT_MODEL_TIMEOUT_SECONDS,
-    )
-
-
 def _read_positive_int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None:
@@ -388,6 +402,17 @@ def _read_positive_float_env(name: str, default: float) -> float:
         raise RunnerContractError(f"{name} must be a positive number") from exc
     if value <= 0:
         raise RunnerContractError(f"{name} must be a positive number")
+    return value
+
+
+def _read_non_empty_string_env(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    value = raw.strip()
+    if not value:
+        raise RunnerContractError(f"{name} must be a non-empty string")
     return value
 
 

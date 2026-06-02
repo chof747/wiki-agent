@@ -92,6 +92,69 @@ def test_runner_returns_update_failed_when_model_output_does_not_change_page(tmp
     assert state["deleted_comment_ids"] == []
 
 
+def test_runner_returns_structured_failure_for_invalid_max_input_bytes_env(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        extra_env={"WIKI_AGENT_RUNNER_MAX_INPUT_BYTES": "not-an-int"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "RUNNER_CONFIG_INVALID",
+        "message": "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES must be a positive integer",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
+def test_runner_returns_structured_failure_for_invalid_max_output_bytes_env(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        extra_env={"WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES": "0"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "RUNNER_CONFIG_INVALID",
+        "message": "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES must be a positive integer",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
+def test_runner_returns_structured_failure_for_invalid_model_timeout_env(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        extra_env={"WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS": "-1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "RUNNER_CONFIG_INVALID",
+        "message": "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS must be a positive number",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
 def test_runner_enforces_input_size_limit_before_model_call(tmp_path: Path) -> None:
     result, state_path, helper_log_path, openai_log_path = _run_runner(
         tmp_path,
