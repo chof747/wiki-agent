@@ -113,31 +113,30 @@ def test_run_once_smoke(tmp_path: Path) -> None:
     postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
     if not postgres_dsn:
         pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run non-dry-run CLI smoke coverage")
-
-    helper_dir = Path(__file__).parent.parent / ".runtime" / "integration-harness" / "bin"
-    helper_path = helper_dir / "wikigo-comments-scan"
-    if shutil.which("wikigo-comments-scan") is None and not helper_path.exists():
-        pytest.skip(
-            "wikigo-comments-scan is not available; run the integration harness or add the helper to PATH"
-        )
-
-    if helper_path.exists():
-        reset = subprocess.run(
-            ["uv", "run", "wiki-agent-integration", "reset"],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=os.environ.copy(),
-        )
-        if reset.returncode != 0:
-            pytest.skip(f"integration harness reset failed: {reset.stderr or reset.stdout}")
-
     with psycopg.connect(postgres_dsn) as connection, connection.cursor() as cursor:
         cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
         connection.commit()
 
     env = os.environ.copy()
     env["WIKI_AGENT_POSTGRES_DSN"] = postgres_dsn
+    helper_path = tmp_path / "wikigo-comments-scan"
+    helper_path.write_text(
+        """#!/bin/sh
+cat <<'EOF'
+[
+  {
+    "comment_id": "comment-1",
+    "page_path": "/pages/alpha",
+    "body": "@marvin tighten this page",
+    "author": "alice",
+    "comment_url": "https://example.test/comments/1"
+  }
+]
+EOF
+""",
+        encoding="utf-8",
+    )
+    helper_path.chmod(0o755)
     fake_runner_dir = tmp_path / "runner-bin"
     fake_runner_dir.mkdir()
     capture_path = fake_runner_dir / "runner-stdin.json"
@@ -159,10 +158,7 @@ sys.stdout.write(json.dumps({"status": "SUCCESS"}))
     env["WIKI_AGENT_RUNNER_COMMAND_JSON"] = json.dumps(
         [str(runner_path), "--capture", str(capture_path)]
     )
-    if helper_path.exists():
-        env["PATH"] = f"{fake_runner_dir}{os.pathsep}{helper_dir}{os.pathsep}{env['PATH']}"
-    else:
-        env["PATH"] = f"{fake_runner_dir}{os.pathsep}{env['PATH']}"
+    env["PATH"] = f"{fake_runner_dir}{os.pathsep}{tmp_path}{os.pathsep}{env['PATH']}"
     result = subprocess.run(
         [script, "run-once", "--config", str(config_path)],
         capture_output=True,
