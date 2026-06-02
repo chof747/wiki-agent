@@ -113,7 +113,6 @@ def test_run_once_smoke(tmp_path: Path) -> None:
     postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
     if not postgres_dsn:
         pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run non-dry-run CLI smoke coverage")
-
     with psycopg.connect(postgres_dsn) as connection, connection.cursor() as cursor:
         cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
         connection.commit()
