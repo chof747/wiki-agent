@@ -136,6 +136,11 @@ document rather than a silent omission.
 
 ### Local harness env examples
 
+The `wiki-agent-integration` command loads environment values from the repo-root
+`.env` file before running a harness command. Values already exported by the
+calling shell take precedence over `.env`. The file supports blank lines,
+comments, optional `export`, and quoted or unquoted `KEY=VALUE` entries.
+
 If your normal local Postgres setup uses the standard repo DSN, export it once:
 
 ```bash

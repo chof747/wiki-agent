@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import socket
 import subprocess
 import shutil
@@ -40,6 +41,8 @@ WIKIGO_READY_TIMEOUT_SECONDS = 90.0
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_root_dotenv()
+
     parser = argparse.ArgumentParser(prog="integration-harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("up")
@@ -66,6 +69,33 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error("unsupported command")
     return 2
+
+
+def load_root_dotenv() -> None:
+    dotenv_path = REPO_ROOT / ".env"
+    if not dotenv_path.exists():
+        return
+
+    for line_number, raw_line in enumerate(
+        dotenv_path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        try:
+            tokens = shlex.split(raw_line, comments=True, posix=True)
+        except ValueError as exc:
+            raise SystemExit(f"{dotenv_path}:{line_number}: invalid .env entry: {exc}") from exc
+
+        if not tokens:
+            continue
+        if tokens[0] == "export":
+            tokens = tokens[1:]
+        if len(tokens) != 1 or "=" not in tokens[0]:
+            raise SystemExit(f"{dotenv_path}:{line_number}: expected KEY=VALUE")
+
+        name, value = tokens[0].split("=", 1)
+        if not name.isidentifier():
+            raise SystemExit(f"{dotenv_path}:{line_number}: invalid environment variable name")
+        os.environ.setdefault(name, value)
 
 
 def up() -> None:

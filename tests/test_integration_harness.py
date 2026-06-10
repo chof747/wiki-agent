@@ -7,6 +7,48 @@ import pytest
 from tools import integration_harness
 
 
+def test_main_loads_root_dotenv_before_running_command(monkeypatch, tmp_path: Path) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        'export WIKI_AGENT_POSTGRES_DSN="postgresql://dotenv:dotenv@localhost:5432/wiki_agent"\n',
+        encoding="utf-8",
+    )
+    observed: list[str | None] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("WIKI_AGENT_POSTGRES_DSN", raising=False)
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+    )
+
+    assert integration_harness.main(["up"]) == 0
+    assert observed == ["postgresql://dotenv:dotenv@localhost:5432/wiki_agent"]
+
+
+def test_main_preserves_exported_environment_over_root_dotenv(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "WIKI_AGENT_POSTGRES_DSN=postgresql://dotenv:dotenv@localhost:5432/wiki_agent\n",
+        encoding="utf-8",
+    )
+    observed: list[str | None] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://exported:exported@localhost:5432/wiki_agent",
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+    )
+
+    assert integration_harness.main(["up"]) == 0
+    assert observed == ["postgresql://exported:exported@localhost:5432/wiki_agent"]
+
+
 def test_load_or_create_state_creates_runtime_directory(monkeypatch, tmp_path: Path) -> None:
     state_path = tmp_path / "runtime" / "integration-harness" / "state.json"
 
