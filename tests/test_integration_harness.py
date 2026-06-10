@@ -45,6 +45,32 @@ def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_pat
     assert 'dsn = "postgresql://ci:ci@localhost:5432/wiki_agent_ci"' in config_text
 
 
+def test_runtime_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
+    monkeypatch.delenv(integration_harness.RUNTIME_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent",
+    )
+
+    assert (
+        integration_harness.runtime_postgres_dsn()
+        == "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+    )
+
+
+def test_admin_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
+    monkeypatch.delenv(integration_harness.ADMIN_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent",
+    )
+
+    assert (
+        integration_harness.admin_postgres_dsn()
+        == "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+    )
+
+
 def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) -> None:
     timeline = iter([0.0, 0.0, 1.0])
 

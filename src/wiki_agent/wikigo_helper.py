@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     comments_delete_parser = comments_subparsers.add_parser("delete")
     comments_delete_parser.add_argument("comment_id")
     comments_delete_parser.add_argument("page")
+
+    comments_create_parser = comments_subparsers.add_parser("create")
+    comments_create_parser.add_argument("page")
+    comments_create_parser.add_argument("content_file", type=Path)
 
     page_parser = subparsers.add_parser("page")
     page_subparsers = page_parser.add_subparsers(dest="page_command", required=True)
@@ -98,6 +103,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.comments_command == "delete":
             delete_comment(session, args.comment_id, args.page)
             print(f"deleted comment: {args.comment_id}")
+            return 0
+
+        if args.comments_command == "create":
+            comment = create_comment(
+                session,
+                args.page,
+                args.content_file.read_text(encoding="utf-8"),
+            )
+            print(json.dumps(comment, ensure_ascii=False))
             return 0
 
     if args.command == "page":
@@ -166,19 +180,38 @@ def main(argv: list[str] | None = None) -> int:
 
 def load_runtime_config() -> dict[str, str]:
     config_value = os.environ.get("WIKIGO_RUNTIME_CONFIG")
-    if not config_value:
-        raise SystemExit("WIKIGO_RUNTIME_CONFIG is not set")
-    config_path = Path(config_value)
-    if not config_path.exists():
-        raise SystemExit(f"WIKIGO_RUNTIME_CONFIG does not exist: {config_path}")
+    if config_value:
+        config_path = Path(config_value)
+        if not config_path.exists():
+            raise SystemExit(f"WIKIGO_RUNTIME_CONFIG does not exist: {config_path}")
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        payload, config_path = _load_runtime_config_from_app_config()
 
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
     for key in ("base_url", "username", "password"):
         value = payload.get(key)
         if not isinstance(value, str) or not value:
             raise SystemExit(f"runtime config field '{key}' must be a non-empty string")
     payload["config_file"] = str(config_path)
     return payload
+
+
+def _load_runtime_config_from_app_config() -> tuple[dict[str, Any], Path]:
+    config_value = os.environ.get("WIKI_AGENT_CONFIG_PATH")
+    if not config_value:
+        raise SystemExit("WIKIGO_RUNTIME_CONFIG is not set")
+
+    config_path = Path(config_value)
+    if not config_path.exists():
+        raise SystemExit(f"WIKI_AGENT_CONFIG_PATH does not exist: {config_path}")
+
+    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    wikigo = raw.get("wikigo")
+    if not isinstance(wikigo, dict):
+        raise SystemExit("config file is missing [wikigo] settings")
+
+    payload = {key: wikigo.get(key) for key in ("base_url", "username", "password")}
+    return payload, config_path
 
 
 class WikiGoSession:
@@ -377,6 +410,26 @@ def delete_comment(session: WikiGoSession, comment_id: str, page: str) -> None:
     raise SystemExit(f"unable to delete comment id {comment_id}: no known delete endpoint worked")
 
 
+def create_comment(session: WikiGoSession, page: str, content: str) -> dict[str, Any]:
+    attempts = [
+        (f"/api/comments/add/{quote_page(page)}", {"content": content}),
+        (f"/api/comments/{quote_page(page)}", {"content": content}),
+        (f"/api/comment/{quote_page(page)}", {"content": content}),
+        ("/api/comments", {"path": page, "content": content}),
+        ("/api/comment", {"path": page, "content": content}),
+        ("/api/comments/create", {"path": page, "content": content}),
+        ("/api/comment/create", {"path": page, "content": content}),
+    ]
+
+    for endpoint, payload in attempts:
+        try:
+            return session.post_json(endpoint, payload)
+        except SystemExit:
+            continue
+
+    raise SystemExit(f"unable to create comment on page {page}: no known create endpoint worked")
+
+
 def discover_pages(session: WikiGoSession) -> list[str]:
     sitemap_xml = session.request("GET", "/sitemap.xml").decode("utf-8")
     root = ET.fromstring(sitemap_xml)
@@ -398,4 +451,3 @@ def discover_pages(session: WikiGoSession) -> list[str]:
 
 def quote_page(page: str) -> str:
     return urllib.parse.quote(page, safe="/")
-

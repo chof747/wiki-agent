@@ -45,6 +45,45 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     assert state["deleted_comment_ids"] == ["comment-1"]
 
 
+def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            "bot_name = \"marvin\"\n\n"
+            "[postgres]\n"
+            "dsn = \"postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent\"\n\n"
+            "[wikigo]\n"
+            "base_url = \"http://127.0.0.1:4010\"\n"
+            "username = \"marvin\"\n"
+            "password = \"marvin-pass\"\n\n"
+            "[runner]\n"
+            "command = [\"wiki-agent-runner\"]\n\n"
+            "[runner.openai]\n"
+            "api_key = \"config-openai-key\"\n"
+            "model = \"gpt-4.1-mini\"\n"
+            "max_input_bytes = 12345\n"
+            "max_output_bytes = 23456\n"
+            "timeout_seconds = 12.5\n\n"
+            "[service]\n"
+            "log_level = \"INFO\"\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result, _state_path, _helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+        extra_env={"WIKI_AGENT_CONFIG_PATH": str(config_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    openai_calls = _read_jsonl(openai_log_path)
+    assert len(openai_calls) == 1
+    assert openai_calls[0]["model"] == "gpt-4.1-mini"
+    assert openai_calls[0]["timeout"] == 12.5
+
+
 def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Path) -> None:
     result, state_path, helper_log_path, _ = _run_runner(
         tmp_path,
@@ -59,7 +98,7 @@ def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Pat
     assert json.loads(result.stdout) == {
         "status": "UPDATE_FAILED",
         "error_code": "MODEL_OUTPUT_INVALID",
-        "message": "model output must contain exactly one string field: final_page_content",
+        "message": "model output must be a JSON object matching the runner decision schema",
     }
 
     helper_calls = _read_jsonl(helper_log_path)
@@ -248,6 +287,188 @@ def test_runner_returns_delete_failed_after_confirmed_update_when_comment_delete
     assert state["deleted_comment_ids"] == ["comment-1"]
 
 
+def test_runner_executes_visible_rejection_flow_for_cross_page_request(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": "CROSS_PAGE_REQUEST",
+            "explanation": "This agent can only update the page where the comment was posted.",
+        },
+        original_comment_text="@marvin update /other-page too",
+        prompt="update /other-page too",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "REJECTED_WITH_COMMENT"}
+
+    helper_calls = _read_jsonl(helper_log_path)
+    assert [call["command"] for call in helper_calls] == [
+        "page.get",
+        "comments.create",
+        "comments.list",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    replacement_comment = helper_calls[1]["content"]
+    assert replacement_comment == (
+        '<!-- wiki-agent:rejection source_comment_id="comment-1" '
+        'reason_code="CROSS_PAGE_REQUEST" -->\n\n'
+        "Marvin could not process this request.\n\n"
+        "> @marvin update /other-page too\n\n"
+        "Reason (`CROSS_PAGE_REQUEST`): This agent can only update the page where the comment was posted.\n"
+    )
+
+    openai_calls = _read_jsonl(openai_log_path)
+    assert len(openai_calls) == 1
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+    assert state["deleted_comment_ids"] == ["comment-1"]
+    assert state["comments"] == [
+        {
+            "id": "comment-created-1",
+            "text": replacement_comment,
+        }
+    ]
+
+
+def test_runner_truncates_long_original_comment_in_rejection_comment(tmp_path: Path) -> None:
+    original_comment_text = "@marvin " + ("very long request " * 40).strip()
+    result, _, helper_log_path, _ = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": "UNSUPPORTED_ACTION",
+            "explanation": "This runner does not support that kind of request.",
+        },
+        original_comment_text=original_comment_text,
+        prompt=original_comment_text.removeprefix("@marvin ").strip(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "REJECTED_WITH_COMMENT"}
+
+    helper_calls = _read_jsonl(helper_log_path)
+    replacement_comment = helper_calls[1]["content"]
+    assert "> [original comment truncated for length]\n" in replacement_comment
+    assert original_comment_text not in replacement_comment
+
+
+def test_runner_returns_update_failed_when_replacement_comment_confirmation_fails(
+    tmp_path: Path,
+) -> None:
+    result, _, helper_log_path, _ = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": "UNCLEAR_REQUEST",
+            "explanation": "The request was not specific enough to execute safely.",
+        },
+        suppress_created_comment=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "REPLACEMENT_CONFIRMATION_FAILED",
+        "message": "replacement comment was not present during confirmation",
+    }
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "comments.create",
+        "comments.list",
+    ]
+
+
+def test_runner_returns_delete_failed_after_confirmed_rejection_when_delete_confirmation_fails(
+    tmp_path: Path,
+) -> None:
+    result, state_path, helper_log_path, _ = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": "FORBIDDEN_ACTION",
+            "explanation": "This request asks for an action the agent must not perform.",
+        },
+        keep_comment_after_delete=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "DELETE_FAILED",
+        "error_code": "DELETE_CONFIRMATION_FAILED",
+        "message": "source comment still present after delete confirmation",
+    }
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "comments.create",
+        "comments.list",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["deleted_comment_ids"] == ["comment-1"]
+
+
+def test_runner_confirms_replacement_comment_when_listed_text_is_stripped(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _ = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": "UNCLEAR_REQUEST",
+            "explanation": "The request was not specific enough to execute safely.",
+        },
+        strip_created_comment_text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "REJECTED_WITH_COMMENT"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "comments.create",
+        "comments.list",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["deleted_comment_ids"] == ["comment-1"]
+
+
+@pytest.mark.parametrize(
+    "rejection_reason_code",
+    sorted(runner.REJECTION_REASON_CODES),
+)
+def test_validate_model_payload_accepts_all_rejection_reason_codes(rejection_reason_code: str) -> None:
+    decision = runner._validate_model_payload(
+        {
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": rejection_reason_code,
+            "explanation": "Human-readable explanation.",
+        }
+    )
+
+    assert decision == runner.RunnerDecision(
+        action="reject",
+        rejection_reason_code=rejection_reason_code,
+        explanation="Human-readable explanation.",
+    )
+
+
 def test_render_prompt_includes_all_runtime_inputs() -> None:
     template = (
         "Target={{TARGET_PAGE}}\n"
@@ -290,6 +511,10 @@ def _run_runner(
     openai_output: dict[str, object],
     extra_env: dict[str, str] | None = None,
     keep_comment_after_delete: bool = False,
+    suppress_created_comment: bool = False,
+    strip_created_comment_text: bool = False,
+    original_comment_text: str = "@marvin # Rewrite the page\n\nMake it shorter.\n",
+    prompt: str = "# Rewrite the page\n\nMake it shorter.\n",
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     script = shutil.which("wiki-agent-runner")
     assert script is not None
@@ -301,8 +526,10 @@ def _run_runner(
                 "page_markdown": page_markdown,
                 "saved_markdown": None,
                 "deleted_comment_ids": [],
-                "comments": [{"id": "comment-1", "text": "@marvin # Rewrite the page\n\nMake it shorter.\n"}],
+                "comments": [{"id": "comment-1", "text": original_comment_text}],
                 "keep_comment_after_delete": keep_comment_after_delete,
+                "suppress_created_comment": suppress_created_comment,
+                "strip_created_comment_text": strip_created_comment_text,
             }
         ),
         encoding="utf-8",
@@ -317,12 +544,13 @@ def _run_runner(
     env = os.environ.copy()
     env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
     env["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    env.setdefault("OPENAI_API_KEY", "test-openai-key")
     if extra_env:
         env.update(extra_env)
 
     result = subprocess.run(
         [script],
-        input=json.dumps(_envelope()),
+        input=json.dumps(_envelope(original_comment_text=original_comment_text, prompt=prompt)),
         capture_output=True,
         text=True,
         check=False,
@@ -331,10 +559,10 @@ def _run_runner(
     return result, state_path, helper_log_path, openai_log_path
 
 
-def _envelope() -> dict[str, object]:
+def _envelope(*, original_comment_text: str, prompt: str) -> dict[str, object]:
     return {
-        "prompt": "# Rewrite the page\n\nMake it shorter.\n",
-        "original_comment_text": "@marvin # Rewrite the page\n\nMake it shorter.\n",
+        "prompt": prompt,
+        "original_comment_text": original_comment_text,
         "target_page": "/pages/example",
         "comment_identity": "comment-1",
         "source_metadata": {"source_system": "wiki-go", "author": "alice"},
@@ -365,7 +593,8 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             f"OUTPUT_PAYLOAD = {output_payload!r}\n"
             "\n"
             "class OpenAI:\n"
-            "    def __init__(self, *, timeout=None):\n"
+            "    def __init__(self, *, api_key=None, timeout=None):\n"
+            "        self.api_key = api_key\n"
             "        self.timeout = timeout\n"
             "        self.responses = _Responses(timeout)\n"
             "\n"
@@ -382,7 +611,15 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "        LOG_PATH.write_text(lines + json.dumps(entry) + '\\n', encoding='utf-8')\n"
             "        if isinstance(OUTPUT_PAYLOAD, dict) and 'raise_error' in OUTPUT_PAYLOAD:\n"
             "            raise RuntimeError(OUTPUT_PAYLOAD['raise_error'])\n"
-            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(OUTPUT_PAYLOAD))\n"
+            "        payload = OUTPUT_PAYLOAD\n"
+            "        if isinstance(payload, dict) and 'action' not in payload and set(payload.keys()) == {'final_page_content'}:\n"
+            "            payload = {\n"
+            "                'action': 'update',\n"
+            "                'final_page_content': payload['final_page_content'],\n"
+            "                'rejection_reason_code': None,\n"
+            "                'explanation': None,\n"
+            "            }\n"
+            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload))\n"
         ),
         encoding="utf-8",
     )
@@ -445,6 +682,20 @@ def _write_wikigo_comments_helper(path: Path, state_path: Path, log_path: Path) 
             "    if not state.get('keep_comment_after_delete'):\n"
             "        state['comments'] = [item for item in state.get('comments', []) if item.get('id') != comment_id]\n"
             "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"
+            "    raise SystemExit(0)\n"
+            "if command == 'create':\n"
+            "    page = sys.argv[2]\n"
+            "    content = pathlib.Path(sys.argv[3]).read_text(encoding='utf-8')\n"
+            "    line = json.dumps({'command': 'comments.create', 'page': page, 'content': content}) + '\\n'\n"
+            "    existing = log_path.read_text(encoding='utf-8') if log_path.exists() else ''\n"
+            "    log_path.write_text(existing + line, encoding='utf-8')\n"
+            "    comments = state.setdefault('comments', [])\n"
+            "    if not state.get('suppress_created_comment'):\n"
+            "        stored_text = content.strip() if state.get('strip_created_comment_text') else content\n"
+            "        comments.append({'id': f'comment-created-{len(comments)}', 'text': stored_text})\n"
+            "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"
+            "    comment_id = comments[-1]['id'] if comments else 'comment-created-0'\n"
+            "    sys.stdout.write(json.dumps({'id': comment_id}))\n"
             "    raise SystemExit(0)\n"
             "if command == 'list':\n"
             "    page = sys.argv[2]\n"

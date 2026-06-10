@@ -3,8 +3,20 @@ bot_name = "marvin"
 [postgres]
 dsn = "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
 
+[wikigo]
+base_url = "http://127.0.0.1:4010"
+username = "marvin"
+password = "marvin-pass"
+
 [runner]
 command = ["wiki-agent-runner"]
+
+[runner.openai]
+api_key = "test-openai-key"
+model = "gpt-4o-2024-08-06"
+max_input_bytes = 32768
+max_output_bytes = 40960
+timeout_seconds = 60
 
 [service]
 log_level = "INFO"

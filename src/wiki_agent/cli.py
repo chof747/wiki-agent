@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 from pathlib import Path
 from types import FrameType
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    os.environ["WIKI_AGENT_CONFIG_PATH"] = str(args.config.resolve())
 
     try:
         config = load_config(args.config)

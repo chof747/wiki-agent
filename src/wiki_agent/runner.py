@@ -11,11 +11,14 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from wiki_agent.config import load_config
+
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
 DEFAULT_MAX_INPUT_BYTES = 32 * 1024
 DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
+DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
 PROMPT_TEMPLATE_PACKAGE = "wiki_agent.prompts"
 REQUIRED_PROMPT_TOKENS = (
@@ -24,6 +27,15 @@ REQUIRED_PROMPT_TOKENS = (
     "{{ORIGINAL_COMMENT_TEXT}}",
     "{{CURRENT_PAGE_CONTENT}}",
 )
+REJECTION_REASON_CODES = {
+    "UNCLEAR_REQUEST",
+    "MULTI_TARGET_REQUEST",
+    "CROSS_PAGE_REQUEST",
+    "FORBIDDEN_ACTION",
+    "UNSUPPORTED_ACTION",
+    "MISSING_CONTEXT",
+    "SAFETY_REFUSAL",
+}
 
 
 class RunnerContractError(ValueError):
@@ -43,7 +55,16 @@ class ModelOutputError(ValueError):
 
 
 @dataclass(frozen=True)
+class RunnerDecision:
+    action: str
+    final_page_content: str | None = None
+    rejection_reason_code: str | None = None
+    explanation: str | None = None
+
+
+@dataclass(frozen=True)
 class RunnerSettings:
+    api_key: str
     openai_model: str
     max_input_bytes: int
     max_output_bytes: int
@@ -51,13 +72,28 @@ class RunnerSettings:
 
     @classmethod
     def from_env(cls) -> "RunnerSettings":
+        config = _load_app_config_from_env()
+        config_openai = config.runner_openai if config is not None else None
         return cls(
-            openai_model=_read_non_empty_string_env("WIKI_AGENT_RUNNER_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
-            max_input_bytes=_read_positive_int_env("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", DEFAULT_MAX_INPUT_BYTES),
-            max_output_bytes=_read_positive_int_env("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", DEFAULT_MAX_OUTPUT_BYTES),
+            api_key=_read_non_empty_string_env(
+                "OPENAI_API_KEY",
+                config_openai.api_key if config_openai is not None else None,
+            ),
+            openai_model=_read_non_empty_string_env(
+                "WIKI_AGENT_RUNNER_OPENAI_MODEL",
+                config_openai.model if config_openai is not None else DEFAULT_OPENAI_MODEL,
+            ),
+            max_input_bytes=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES",
+                config_openai.max_input_bytes if config_openai is not None else DEFAULT_MAX_INPUT_BYTES,
+            ),
+            max_output_bytes=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES",
+                config_openai.max_output_bytes if config_openai is not None else DEFAULT_MAX_OUTPUT_BYTES,
+            ),
             model_timeout_seconds=_read_positive_float_env(
                 "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
-                DEFAULT_MODEL_TIMEOUT_SECONDS,
+                config_openai.timeout_seconds if config_openai is not None else DEFAULT_MODEL_TIMEOUT_SECONDS,
             ),
         )
 
@@ -130,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        final_page_content = _generate_final_page_content(rendered_prompt, settings)
+        decision = _generate_runner_decision(rendered_prompt, settings)
     except ModelOutputError as exc:
         _emit_response("UPDATE_FAILED", "MODEL_OUTPUT_INVALID", str(exc))
         return 0
@@ -138,33 +174,67 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response("UPDATE_FAILED", "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
-    if _utf8_len(final_page_content) > settings.max_output_bytes:
-        _emit_response("UPDATE_FAILED", "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
-        return 0
+    if decision.action == "update":
+        final_page_content = decision.final_page_content
+        assert final_page_content is not None
 
-    if final_page_content == current_page_content:
-        _emit_response("UPDATE_FAILED", "NO_CONTENT_CHANGE", "model output did not change the current page content")
-        return 0
+        if _utf8_len(final_page_content) > settings.max_output_bytes:
+            _emit_response("UPDATE_FAILED", "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
+            return 0
 
-    try:
-        _save_page(envelope.target_page, final_page_content)
-    except HelperCommandError as exc:
-        _emit_response("UPDATE_FAILED", "PAGE_SAVE_FAILED", str(exc))
-        return 0
+        if final_page_content == current_page_content:
+            _emit_response("UPDATE_FAILED", "NO_CONTENT_CHANGE", "model output did not change the current page content")
+            return 0
 
-    try:
-        confirmed_markdown = _read_page(envelope.target_page)
-    except HelperCommandError as exc:
-        _emit_response("UPDATE_FAILED", "UPDATE_CONFIRMATION_FAILED", str(exc))
-        return 0
+        try:
+            _save_page(envelope.target_page, final_page_content)
+        except HelperCommandError as exc:
+            _emit_response("UPDATE_FAILED", "PAGE_SAVE_FAILED", str(exc))
+            return 0
 
-    if confirmed_markdown != final_page_content:
-        _emit_response(
-            "UPDATE_FAILED",
-            "UPDATE_CONFIRMATION_FAILED",
-            "saved page content did not match confirmation fetch",
+        try:
+            confirmed_markdown = _read_page(envelope.target_page)
+        except HelperCommandError as exc:
+            _emit_response("UPDATE_FAILED", "UPDATE_CONFIRMATION_FAILED", str(exc))
+            return 0
+
+        if confirmed_markdown != final_page_content:
+            _emit_response(
+                "UPDATE_FAILED",
+                "UPDATE_CONFIRMATION_FAILED",
+                "saved page content did not match confirmation fetch",
+            )
+            return 0
+    else:
+        replacement_comment = _build_rejection_comment(
+            comment_identity=envelope.comment_identity,
+            original_comment_text=envelope.original_comment_text,
+            rejection_reason_code=decision.rejection_reason_code or "",
+            explanation=decision.explanation or "",
         )
-        return 0
+        try:
+            _create_comment(envelope.target_page, replacement_comment)
+        except HelperCommandError as exc:
+            _emit_response("UPDATE_FAILED", "COMMENT_CREATE_FAILED", str(exc))
+            return 0
+
+        try:
+            replacement_comments = _list_comments(envelope.target_page)
+        except HelperCommandError as exc:
+            _emit_response("UPDATE_FAILED", "REPLACEMENT_CONFIRMATION_FAILED", str(exc))
+            return 0
+
+        expected_replacement_comment = replacement_comment.strip()
+        if not any(
+            isinstance(comment.get("text"), str) and comment["text"].strip() == expected_replacement_comment
+            for comment in replacement_comments
+        ):
+            _emit_response(
+                "UPDATE_FAILED",
+                "REPLACEMENT_CONFIRMATION_FAILED",
+                "replacement comment was not present during confirmation",
+            )
+            return 0
 
     try:
         _delete_comment(envelope.comment_identity, envelope.target_page)
@@ -186,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    _emit_response("SUCCESS")
+    _emit_response("SUCCESS" if decision.action == "update" else "REJECTED_WITH_COMMENT")
     return 0
 
 
@@ -213,10 +283,10 @@ def render_prompt(
     return pattern.sub(lambda match: replacements[match.group(0)], template)
 
 
-def _generate_final_page_content(rendered_prompt: str, settings: RunnerSettings) -> str:
+def _generate_runner_decision(rendered_prompt: str, settings: RunnerSettings) -> RunnerDecision:
     from openai import OpenAI
 
-    client = OpenAI(timeout=settings.model_timeout_seconds)
+    client = OpenAI(api_key=settings.api_key, timeout=settings.model_timeout_seconds)
     response = client.responses.create(
         model=settings.openai_model,
         input=[
@@ -251,31 +321,55 @@ def _generate_final_page_content(rendered_prompt: str, settings: RunnerSettings)
 def _response_format_schema() -> dict[str, Any]:
     return {
         "type": "json_schema",
-        "name": "wiki_agent_page_update",
+        "name": "wiki_agent_runner_decision",
         "schema": {
             "type": "object",
             "properties": {
-                "final_page_content": {"type": "string"},
+                "action": {"type": "string", "enum": ["update", "reject"]},
+                "final_page_content": {"type": ["string", "null"]},
+                "rejection_reason_code": {"type": ["string", "null"]},
+                "explanation": {"type": ["string", "null"]},
             },
-            "required": ["final_page_content"],
+            "required": ["action", "final_page_content", "rejection_reason_code", "explanation"],
             "additionalProperties": False,
         },
         "strict": True,
     }
 
 
-def _validate_model_payload(payload: object) -> str:
+def _validate_model_payload(payload: object) -> RunnerDecision:
     if not isinstance(payload, dict):
-        raise ModelOutputError("model output must contain exactly one string field: final_page_content")
+        raise ModelOutputError("model output must be a JSON object matching the runner decision schema")
 
-    if set(payload.keys()) != {"final_page_content"}:
-        raise ModelOutputError("model output must contain exactly one string field: final_page_content")
+    expected_keys = {"action", "final_page_content", "rejection_reason_code", "explanation"}
+    if set(payload.keys()) != expected_keys:
+        raise ModelOutputError("model output must be a JSON object matching the runner decision schema")
 
-    final_page_content = payload.get("final_page_content")
-    if not isinstance(final_page_content, str):
-        raise ModelOutputError("model output must contain exactly one string field: final_page_content")
+    action = payload.get("action")
+    if action == "update":
+        final_page_content = payload.get("final_page_content")
+        if not isinstance(final_page_content, str):
+            raise ModelOutputError("update action must include final_page_content")
+        if payload.get("rejection_reason_code") is not None or payload.get("explanation") is not None:
+            raise ModelOutputError("update action must not include rejection fields")
+        return RunnerDecision(action="update", final_page_content=final_page_content)
 
-    return final_page_content
+    if action == "reject":
+        rejection_reason_code = payload.get("rejection_reason_code")
+        explanation = payload.get("explanation")
+        if rejection_reason_code not in REJECTION_REASON_CODES:
+            raise ModelOutputError("reject action must include a valid rejection_reason_code")
+        if not isinstance(explanation, str) or not explanation.strip():
+            raise ModelOutputError("reject action must include a non-empty explanation")
+        if payload.get("final_page_content") is not None:
+            raise ModelOutputError("reject action must not include final_page_content")
+        return RunnerDecision(
+            action="reject",
+            rejection_reason_code=rejection_reason_code,
+            explanation=explanation.strip(),
+        )
+
+    raise ModelOutputError("model output must set action to update or reject")
 
 
 def _load_prompt_template() -> str:
@@ -326,6 +420,19 @@ def _delete_comment(comment_identity: str, target_page: str) -> None:
     _run_helper(["wikigo-comments", "delete", comment_identity, target_page])
 
 
+def _create_comment(target_page: str, content: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as handle:
+            handle.write(content)
+            temp_path = Path(handle.name)
+
+        _run_helper(["wikigo-comments", "create", target_page, str(temp_path)])
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def _list_comments(target_page: str) -> list[dict[str, Any]]:
     result = _run_helper(["wikigo-comments", "list", target_page])
 
@@ -342,6 +449,36 @@ def _list_comments(target_page: str) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             comments.append(item)
     return comments
+
+
+def _build_rejection_comment(
+    *,
+    comment_identity: str,
+    original_comment_text: str,
+    rejection_reason_code: str,
+    explanation: str,
+) -> str:
+    quoted_text, truncated = _truncate_rejection_quote(original_comment_text)
+    quoted_lines = [f"> {line}" if line else ">" for line in quoted_text.splitlines()]
+    if truncated:
+        quoted_lines.append("> [original comment truncated for length]")
+
+    return (
+        f'<!-- wiki-agent:rejection source_comment_id="{comment_identity}" '
+        f'reason_code="{rejection_reason_code}" -->\n\n'
+        "Marvin could not process this request.\n\n"
+        f"{'\n'.join(quoted_lines)}\n\n"
+        f"Reason (`{rejection_reason_code}`): {explanation}\n"
+    )
+
+
+def _truncate_rejection_quote(original_comment_text: str) -> tuple[str, bool]:
+    encoded = original_comment_text.encode("utf-8")
+    if len(encoded) <= DEFAULT_REJECTION_QUOTE_MAX_BYTES:
+        return original_comment_text, False
+
+    truncated = encoded[:DEFAULT_REJECTION_QUOTE_MAX_BYTES].decode("utf-8", errors="ignore").rstrip()
+    return truncated, True
 
 
 def _run_helper(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -405,15 +542,24 @@ def _read_positive_float_env(name: str, default: float) -> float:
     return value
 
 
-def _read_non_empty_string_env(name: str, default: str) -> str:
+def _read_non_empty_string_env(name: str, default: str | None) -> str:
     raw = os.getenv(name)
     if raw is None:
+        if default is None:
+            raise RunnerContractError(f"{name} must be a non-empty string")
         return default
 
     value = raw.strip()
     if not value:
         raise RunnerContractError(f"{name} must be a non-empty string")
     return value
+
+
+def _load_app_config_from_env():
+    config_path_value = os.getenv("WIKI_AGENT_CONFIG_PATH")
+    if not config_path_value:
+        return None
+    return load_config(Path(config_path_value))
 
 
 def _bounded_message(exc: Exception) -> str:

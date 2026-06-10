@@ -84,6 +84,12 @@ The harness owns:
 - The harness must stay database-scoped and must not restart, wipe, or reconfigure the shared Postgres service.
 - The harness uses an admin DSN for `CREATE DATABASE` and `DROP DATABASE`.
 - The application under test uses a narrower generated runtime DSN for the per-run database.
+- Local DSN resolution order is:
+  1. `WIKI_AGENT_INTEGRATION_ADMIN_DSN` / `WIKI_AGENT_INTEGRATION_RUNTIME_DSN`
+  2. `WIKI_AGENT_POSTGRES_DSN`
+  3. repo fallback defaults
+- For local development, prefer exporting `WIKI_AGENT_POSTGRES_DSN` once when the same DSN is correct for both harness admin access and runtime access.
+- Use the dedicated `WIKI_AGENT_INTEGRATION_*` variables only when the harness needs different admin and runtime DSNs.
 
 ### CI
 
@@ -127,6 +133,54 @@ document rather than a silent omission.
 - The harness-owned `test` path should delegate to pytest integration cases rather than embedding primary scenario assertions inline in the harness script.
 - Future real runtime integration coverage should be added as more pytest cases under `tests/integration/` and executed through the same harness-managed command path.
 - Later harness-managed verification commands should be added as runtime coverage expands, and qualifying runtime issues should invoke the relevant harness command in their final local verification set.
+
+### Local harness env examples
+
+If your normal local Postgres setup uses the standard repo DSN, export it once:
+
+```bash
+export WIKI_AGENT_POSTGRES_DSN="postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration reset
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration test
+```
+
+If the harness needs different admin and runtime credentials, export both explicitly:
+
+```bash
+export WIKI_AGENT_INTEGRATION_ADMIN_DSN="postgresql://admin:admin@localhost:5432/postgres"
+export WIKI_AGENT_INTEGRATION_RUNTIME_DSN="postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration reset
+```
+
+QA plans, operator runbooks, and manual harness instructions should name the required Postgres environment variables explicitly instead of assuming the old `integration:integration` fallback.
+
+### Manual `run-once` against the harness
+
+Running `wiki-agent run-once --config config.toml` directly is not enough for harness-backed manual QA.
+The scanner and runner expect the repo-local `wikigo-*` shim commands on `PATH`,
+and those shims now read the generated harness TOML via `WIKI_AGENT_CONFIG_PATH`.
+
+Use the repo helper script when possible:
+
+```bash
+scripts/manual_harness_run_once.sh
+```
+
+That helper script forces `WIKI_AGENT_CONFIG_PATH` to the generated harness TOML
+at `.runtime/integration-harness/wiki-agent.integration.toml`, so the scanner,
+helper commands, and runner all use the same config source.
+
+If you need to run the command manually, use the harness-generated config and exports explicitly:
+
+```bash
+export WIKI_AGENT_POSTGRES_DSN="postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+export PATH="$PWD/.runtime/integration-harness/bin:$PATH"
+export WIKI_AGENT_CONFIG_PATH="$PWD/.runtime/integration-harness/wiki-agent.integration.toml"
+env UV_CACHE_DIR=/private/tmp/uv-cache \
+  uv run wiki-agent run-once --config "$PWD/.runtime/integration-harness/wiki-agent.integration.toml"
+```
+
+If `wikigo-comments-scan` is missing, that means the harness shim directory is not on `PATH` for the current shell or command invocation.
 
 ## CI Coverage
 
