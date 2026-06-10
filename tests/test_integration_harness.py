@@ -7,6 +7,48 @@ import pytest
 from tools import integration_harness
 
 
+def test_main_loads_root_dotenv_before_running_command(monkeypatch, tmp_path: Path) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        'export WIKI_AGENT_POSTGRES_DSN="postgresql://dotenv:dotenv@localhost:5432/wiki_agent"\n',
+        encoding="utf-8",
+    )
+    observed: list[str | None] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("WIKI_AGENT_POSTGRES_DSN", raising=False)
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+    )
+
+    assert integration_harness.main(["up"]) == 0
+    assert observed == ["postgresql://dotenv:dotenv@localhost:5432/wiki_agent"]
+
+
+def test_main_preserves_exported_environment_over_root_dotenv(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "WIKI_AGENT_POSTGRES_DSN=postgresql://dotenv:dotenv@localhost:5432/wiki_agent\n",
+        encoding="utf-8",
+    )
+    observed: list[str | None] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://exported:exported@localhost:5432/wiki_agent",
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+    )
+
+    assert integration_harness.main(["up"]) == 0
+    assert observed == ["postgresql://exported:exported@localhost:5432/wiki_agent"]
+
+
 def test_load_or_create_state_creates_runtime_directory(monkeypatch, tmp_path: Path) -> None:
     state_path = tmp_path / "runtime" / "integration-harness" / "state.json"
 
@@ -43,6 +85,32 @@ def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_pat
 
     config_text = wiki_agent_config_path.read_text(encoding="utf-8")
     assert 'dsn = "postgresql://ci:ci@localhost:5432/wiki_agent_ci"' in config_text
+
+
+def test_runtime_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
+    monkeypatch.delenv(integration_harness.RUNTIME_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent",
+    )
+
+    assert (
+        integration_harness.runtime_postgres_dsn()
+        == "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+    )
+
+
+def test_admin_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
+    monkeypatch.delenv(integration_harness.ADMIN_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent",
+    )
+
+    assert (
+        integration_harness.admin_postgres_dsn()
+        == "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+    )
 
 
 def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) -> None:

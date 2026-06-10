@@ -92,7 +92,15 @@ The current configuration contract is intentionally small:
 
 - `bot_name`
 - `postgres.dsn`
+- `wikigo.base_url`
+- `wikigo.username`
+- `wikigo.password`
 - `runner.command`
+- `runner.openai.api_key`
+- `runner.openai.model`
+- `runner.openai.max_input_bytes`
+- `runner.openai.max_output_bytes`
+- `runner.openai.timeout_seconds`
 - `service.log_level`
 - `service.scan_interval`
 - `service.stale_processing_timeout`
@@ -106,7 +114,10 @@ Configuration precedence is:
 2. concrete config file passed by `--config`
 3. environment-variable overrides
 
-The repo ships `config.example.toml`. Real deployment config files such as `config.toml` are environment-specific and should not be committed. Secrets should come from environment variables.
+The repo ships `config.example.toml`. Real deployment config files such as
+`config.toml` are environment-specific and should not be committed. Local and
+harness-backed runs may keep the OpenAI API key in the TOML file to avoid
+split-brain configuration, but committed examples must use placeholders.
 
 ## Current Runtime
 
@@ -123,16 +134,16 @@ The repo currently provides:
 - stale `processing` cleanup that marks timed-out jobs terminal `UPDATE_FAILED`
 - a **Worker** path that claims one queued job, invokes the external **Runner**, and persists one finalized terminal status
 - a language-agnostic **Runner** subprocess boundary using stdin for the **Prompt Envelope**, stdout for exactly one finalized **Response**, and stderr for diagnostics
-- an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and applies the confirmed single-page update using `wikigo-page` and `wikigo-comments`
+- an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and either applies a confirmed single-page update or executes a confirmed visible rejection-comment workflow using `wikigo-page` and `wikigo-comments`
 - smoke and config tests
 
-Provider credentials and model selection stay outside the main app config. They are supplied through the **Runner** environment, keeping the app-owned configuration provider-agnostic.
+Provider credentials and model selection are now part of the main app config so
+the app, helper commands, and **Runner** share one runtime contract.
 
 ## Deferred Work
 
 The following behaviors are intentionally deferred to later issues:
 
-- rejection-comment execution flow and reason-code classification
 - health and status HTTP endpoints
 - invocation history beyond the current durable **Comment Job** status fields
 

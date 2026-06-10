@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import socket
 import subprocess
 import shutil
@@ -35,10 +36,13 @@ DEFAULT_ADMIN_POSTGRES_DSN = "postgresql://integration:integration@localhost:543
 DEFAULT_RUNTIME_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"
 ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
 RUNTIME_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_RUNTIME_DSN"
+MAIN_APP_POSTGRES_DSN_ENV = "WIKI_AGENT_POSTGRES_DSN"
 WIKIGO_READY_TIMEOUT_SECONDS = 90.0
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_root_dotenv()
+
     parser = argparse.ArgumentParser(prog="integration-harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("up")
@@ -65,6 +69,33 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error("unsupported command")
     return 2
+
+
+def load_root_dotenv() -> None:
+    dotenv_path = REPO_ROOT / ".env"
+    if not dotenv_path.exists():
+        return
+
+    for line_number, raw_line in enumerate(
+        dotenv_path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        try:
+            tokens = shlex.split(raw_line, comments=True, posix=True)
+        except ValueError as exc:
+            raise SystemExit(f"{dotenv_path}:{line_number}: invalid .env entry: {exc}") from exc
+
+        if not tokens:
+            continue
+        if tokens[0] == "export":
+            tokens = tokens[1:]
+        if len(tokens) != 1 or "=" not in tokens[0]:
+            raise SystemExit(f"{dotenv_path}:{line_number}: expected KEY=VALUE")
+
+        name, value = tokens[0].split("=", 1)
+        if not name.isidentifier():
+            raise SystemExit(f"{dotenv_path}:{line_number}: invalid environment variable name")
+        os.environ.setdefault(name, value)
 
 
 def up() -> None:
@@ -182,8 +213,18 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
             f'bot_name = "{BOT_USERNAME}"\n\n'
             "[postgres]\n"
             f'dsn = "{runtime_postgres_dsn()}"\n\n'
+            "[wikigo]\n"
+            f'base_url = "{state["base_url"]}"\n'
+            f'username = "{BOT_USERNAME}"\n'
+            f'password = "{BOT_PASSWORD}"\n\n'
             "[runner]\n"
             'command = ["wiki-agent-runner"]\n\n'
+            "[runner.openai]\n"
+            f'api_key = "{_toml_string(os.environ.get("OPENAI_API_KEY", "replace-me"))}"\n'
+            f'model = "{_toml_string(os.environ.get("WIKI_AGENT_RUNNER_OPENAI_MODEL", "gpt-4o-2024-08-06"))}"\n'
+            f'max_input_bytes = {int(os.environ.get("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", "32768"))}\n'
+            f'max_output_bytes = {int(os.environ.get("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", "40960"))}\n'
+            f'timeout_seconds = {float(os.environ.get("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", "60"))}\n\n'
             "[service]\n"
             'log_level = "INFO"\n'
         ),
@@ -257,11 +298,31 @@ def helper_env(config_path: Path) -> dict[str, str]:
 
 
 def admin_postgres_dsn() -> str:
-    return os.environ.get(ADMIN_POSTGRES_DSN_ENV, DEFAULT_ADMIN_POSTGRES_DSN)
+    return _dsn_from_env(
+        ADMIN_POSTGRES_DSN_ENV,
+        fallback_env=MAIN_APP_POSTGRES_DSN_ENV,
+        default=DEFAULT_ADMIN_POSTGRES_DSN,
+    )
 
 
 def runtime_postgres_dsn() -> str:
-    return os.environ.get(RUNTIME_POSTGRES_DSN_ENV, DEFAULT_RUNTIME_POSTGRES_DSN)
+    return _dsn_from_env(
+        RUNTIME_POSTGRES_DSN_ENV,
+        fallback_env=MAIN_APP_POSTGRES_DSN_ENV,
+        default=DEFAULT_RUNTIME_POSTGRES_DSN,
+    )
+
+
+def _dsn_from_env(primary_env: str, *, fallback_env: str, default: str) -> str:
+    primary_value = os.environ.get(primary_env)
+    if primary_value:
+        return primary_value
+
+    fallback_value = os.environ.get(fallback_env)
+    if fallback_value:
+        return fallback_value
+
+    return default
 
 
 def ensure_runtime_database() -> None:
@@ -331,14 +392,18 @@ def write_shims() -> None:
         shim_path.write_text(
             (
                 "#!/bin/sh\n"
-                f': "${{WIKIGO_RUNTIME_CONFIG:={BOT_CONFIG_PATH}}}"\n'
-                "export WIKIGO_RUNTIME_CONFIG\n"
+                f': "${{WIKI_AGENT_CONFIG_PATH:={WIKI_AGENT_CONFIG_PATH}}}"\n'
+                "export WIKI_AGENT_CONFIG_PATH\n"
                 f'exec env UV_CACHE_DIR="${{UV_CACHE_DIR:-/private/tmp/uv-cache}}" '
                 f'uv run wikigo-helper {argv} "$@"\n'
             ),
             encoding="utf-8",
         )
         shim_path.chmod(0o755)
+
+
+def _toml_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def run_docker(args: list[str]) -> str:
