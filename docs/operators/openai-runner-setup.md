@@ -94,6 +94,8 @@ timeout_seconds = 60
 
 [service]
 log_level = "INFO"
+scan_interval = 60
+stale_processing_timeout = 900
 EOF
 
 wiki-agent run-once --config config.toml

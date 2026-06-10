@@ -73,7 +73,10 @@ The **Runner** is responsible for execution against Wiki-Go:
 
 ### Long-running mode
 
-`wiki-agent run` starts the foreground service process. In the full design, this process repeatedly scans for work and processes queued jobs one at a time.
+`wiki-agent run` starts the foreground service process. The service acquires a
+singleton Postgres advisory lock, marks stale `processing` jobs terminal after
+the configured timeout, runs the **Scanner** on a fixed interval, and drains the
+queued **Comment Jobs** through the **Worker** one at a time in persisted order.
 
 ### One-shot mode
 
@@ -99,6 +102,11 @@ The current configuration contract is intentionally small:
 - `runner.openai.max_output_bytes`
 - `runner.openai.timeout_seconds`
 - `service.log_level`
+- `service.scan_interval`
+- `service.stale_processing_timeout`
+
+`service.scan_interval` and `service.stale_processing_timeout` are expressed in
+seconds. Their built-in defaults are `60` and `900`.
 
 Configuration precedence is:
 
@@ -111,9 +119,7 @@ The repo ships `config.example.toml`. Real deployment config files such as
 harness-backed runs may keep the OpenAI API key in the TOML file to avoid
 split-brain configuration, but committed examples must use placeholders.
 
-## Current Skeleton
-
-Issue 3 establishes the implementation skeleton, not the full runtime behavior.
+## Current Runtime
 
 The repo currently provides:
 
@@ -121,10 +127,11 @@ The repo currently provides:
 - `src/wiki_agent/` package layout
 - `wiki-agent run` and `wiki-agent run-once` CLI commands
 - stdlib-based config loading and JSON logging
-- a bootable service stub with clean shutdown handling
+- a foreground service loop with singleton lock enforcement and clean shutdown handling
 - a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`
 - a Postgres-backed **Comment Job** repository with idempotent startup DDL
 - durable enqueueing that preserves one canonical job per `source_system + comment_identity`
+- stale `processing` cleanup that marks timed-out jobs terminal `UPDATE_FAILED`
 - a **Worker** path that claims one queued job, invokes the external **Runner**, and persists one finalized terminal status
 - a language-agnostic **Runner** subprocess boundary using stdin for the **Prompt Envelope**, stdout for exactly one finalized **Response**, and stderr for diagnostics
 - an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and either applies a confirmed single-page update or executes a confirmed visible rejection-comment workflow using `wikigo-page` and `wikigo-comments`

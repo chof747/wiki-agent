@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from wiki_agent.app import WikiAgentApp
 from wiki_agent.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
@@ -191,6 +194,58 @@ def test_repository_returns_queue_and_status_counts() -> None:
     assert counts.queued == 1
     assert counts.processing == 0
     assert counts.by_status == {"SUCCESS": 1, "queued": 1}
+
+
+def test_repository_try_acquire_singleton_lock_is_exclusive_when_postgres_is_available() -> None:
+    postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
+    if not postgres_dsn:
+        pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run advisory lock coverage")
+
+    first = CommentJobRepository(postgres_dsn)
+    second = CommentJobRepository(postgres_dsn)
+
+    first_lock = first.try_acquire_singleton_lock()
+    assert first_lock is not None
+    try:
+        second_lock = second.try_acquire_singleton_lock()
+        assert second_lock is None
+    finally:
+        first_lock.release()
+
+    third_lock = second.try_acquire_singleton_lock()
+    assert third_lock is not None
+    third_lock.release()
+
+
+def test_repository_failover_marks_stale_processing_then_claims_next_job_when_postgres_is_available() -> None:
+    postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
+    if not postgres_dsn:
+        pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run failover coverage")
+
+    repository = CommentJobRepository(postgres_dsn)
+    repository.ensure_schema()
+    with repository._connection() as connection, connection.cursor() as cursor:
+        cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
+        connection.commit()
+
+    scanned_at = datetime(2026, 5, 24, 20, 0, tzinfo=UTC)
+    repository.enqueue_event(_event(comment_identity="comment-1"), scanned_at=scanned_at)
+    repository.enqueue_event(_event(comment_identity="comment-2"), scanned_at=scanned_at + timedelta(seconds=1))
+    claimed = repository.claim_next_queued(claimed_at=scanned_at + timedelta(seconds=2))
+
+    assert claimed is not None
+    assert claimed.comment_identity == "comment-1"
+
+    marked = repository.mark_stale_processing_jobs(
+        now=scanned_at + timedelta(seconds=10),
+        processing_timeout=timedelta(seconds=5),
+    )
+
+    assert marked == 1
+
+    next_job = repository.claim_next_queued(claimed_at=scanned_at + timedelta(seconds=11))
+    assert next_job is not None
+    assert next_job.comment_identity == "comment-2"
 
 
 def test_run_once_scans_and_enqueues_before_worker() -> None:

@@ -30,3 +30,23 @@ def test_load_config_reads_wikigo_and_runner_openai_settings() -> None:
     assert config.runner_openai.max_input_bytes == 32768
     assert config.runner_openai.max_output_bytes == 40960
     assert config.runner_openai.timeout_seconds == 60.0
+
+
+def test_service_timing_defaults_are_loaded() -> None:
+    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+
+    config = load_config(config_path)
+
+    assert config.service.scan_interval.total_seconds() == 60
+    assert config.service.stale_processing_timeout.total_seconds() == 900
+
+
+def test_service_timing_env_overrides_are_applied(monkeypatch) -> None:
+    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    monkeypatch.setenv("WIKI_AGENT_SCAN_INTERVAL", "5")
+    monkeypatch.setenv("WIKI_AGENT_STALE_PROCESSING_TIMEOUT", "11")
+
+    config = load_config(config_path)
+
+    assert config.service.scan_interval.total_seconds() == 5
+    assert config.service.stale_processing_timeout.total_seconds() == 11
