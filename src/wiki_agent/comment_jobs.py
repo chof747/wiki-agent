@@ -18,6 +18,8 @@ TERMINAL_STATUSES = {
     "DELETE_FAILED",
 }
 
+SERVICE_ADVISORY_LOCK_KEY = 704_007
+
 
 @dataclass(frozen=True)
 class CommentJob:
@@ -48,6 +50,18 @@ class QueueCounts:
     queued: int
     processing: int
     by_status: dict[str, int]
+
+
+@dataclass
+class SingletonLockHandle:
+    connection: Any
+
+    def release(self) -> None:
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(%s)", (SERVICE_ADVISORY_LOCK_KEY,))
+        finally:
+            self.connection.close()
 
 
 class CommentJobRepository:
@@ -88,6 +102,18 @@ UNIQUE (source_system, comment_identity)
                 "CREATE INDEX IF NOT EXISTS comment_jobs_processing_idx ON comment_jobs (status, claimed_at)"
             )
             connection.commit()
+
+    def try_acquire_singleton_lock(self) -> SingletonLockHandle | None:
+        connection = self._connection()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(%s)", (SERVICE_ADVISORY_LOCK_KEY,))
+            row = cursor.fetchone()
+
+        if row is None or row[0] is not True:
+            connection.close()
+            return None
+
+        return SingletonLockHandle(connection=connection)
 
     def enqueue_event(
         self,

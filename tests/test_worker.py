@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +56,27 @@ def test_worker_noops_when_queue_is_empty() -> None:
     assert result == WorkerRunResult(invocation=None)
     assert repository.updated == []
     assert runner_client.jobs == []
+
+
+def test_worker_logs_reason_code_and_bounded_error_detail(caplog) -> None:
+    repository = FakeRepository(job=_job())
+    runner_client = FakeRunnerClient(
+        response=RunnerResponse(
+            status="REJECTED_WITH_COMMENT",
+            payload={"status": "REJECTED_WITH_COMMENT", "reason_code": "CROSS_PAGE_REQUEST"},
+            stderr="x" * 400,
+        )
+    )
+    worker = Worker(_config(), repository=repository, runner_client=runner_client)
+
+    with caplog.at_level(logging.INFO):
+        worker.run_once()
+
+    finalized = next(record for record in caplog.records if getattr(record, "event", None) == "worker.job_finalized")
+    assert finalized.rejection_reason_code == "CROSS_PAGE_REQUEST"
+    assert isinstance(finalized.error_detail, str)
+    assert len(finalized.error_detail) <= 256
+    assert finalized.error_detail.endswith("...")
 
 
 def _config():

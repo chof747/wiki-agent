@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import psycopg
@@ -186,3 +188,110 @@ sys.stdout.write(json.dumps({"status": "SUCCESS"}))
             "target_page": payload["target_page"],
         }
     }
+
+
+def test_run_service_smoke_handles_sigterm(tmp_path: Path) -> None:
+    script = shutil.which("wiki-agent")
+    assert script is not None
+
+    config_path = tmp_path / "config.toml"
+    postgres_dsn = os.environ.get("WIKI_AGENT_TEST_POSTGRES_DSN")
+    if not postgres_dsn:
+        pytest.skip("set WIKI_AGENT_TEST_POSTGRES_DSN to run long-running CLI smoke coverage")
+
+    with psycopg.connect(postgres_dsn) as connection, connection.cursor() as cursor:
+        cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
+        connection.commit()
+
+    config_path.write_text(
+        "\n".join(
+            [
+                'bot_name = "marvin"',
+                "",
+                "[postgres]",
+                f'dsn = "{postgres_dsn}"',
+                "",
+                "[runner]",
+                'command = ["wiki-agent-runner"]',
+                "",
+                "[service]",
+                'log_level = "INFO"',
+                "scan_interval = 1",
+                "stale_processing_timeout = 5",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    helper_path = tmp_path / "wikigo-comments-scan"
+    helper_path.write_text(
+        """#!/bin/sh
+cat <<'EOF'
+[
+  {
+    "comment_id": "comment-1",
+    "page_path": "/pages/alpha",
+    "body": "@marvin tighten this page",
+    "author": "alice"
+  }
+]
+EOF
+""",
+        encoding="utf-8",
+    )
+    helper_path.chmod(0o755)
+    fake_runner_dir = tmp_path / "runner-bin"
+    fake_runner_dir.mkdir()
+    runner_path = fake_runner_dir / "wiki-agent-runner"
+    runner_path.write_text(
+        """#!/usr/bin/env python3
+import json
+import sys
+
+json.load(sys.stdin)
+sys.stderr.write("runner diagnostic\\n")
+sys.stdout.write(json.dumps({"status": "SUCCESS"}))
+""",
+        encoding="utf-8",
+    )
+    runner_path.chmod(0o755)
+    env["PATH"] = f"{fake_runner_dir}{os.pathsep}{tmp_path}{os.pathsep}{env['PATH']}"
+
+    process = subprocess.Popen(
+        [script, "run", "--config", str(config_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+
+    try:
+        deadline = time.time() + 10
+        stderr_lines: list[str] = []
+        while time.time() < deadline:
+            line = process.stderr.readline()
+            if line:
+                stderr_lines.append(line)
+                event = json.loads(line).get("event")
+                if event == "worker.job_finalized":
+                    break
+            if process.poll() is not None:
+                break
+
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=10)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    assert process.returncode == 0
+    assert stdout == ""
+    events = [json.loads(line)["event"] for line in (stderr_lines + stderr.splitlines()) if line.strip()]
+    assert "service.started" in events
+    assert "worker.job_claimed" in events
+    assert "worker.job_finalized" in events
+    assert "service.shutdown_requested" in events
+    assert "service.stopped" in events
