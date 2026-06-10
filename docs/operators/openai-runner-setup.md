@@ -157,6 +157,8 @@ command = ["wiki-agent-runner"]
 
 [service]
 log_level = "INFO"
+scan_interval = 60
+stale_processing_timeout = 900
 EOF
 
 export OPENAI_API_KEY="sk-your-real-key-here"

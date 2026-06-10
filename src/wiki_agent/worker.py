@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_ERROR_DETAIL_LENGTH = 256
 
 
 @dataclass(frozen=True)
@@ -61,19 +62,22 @@ class Worker:
         try:
             response = self._runner_client.invoke(job)
         except RunnerInvocationError as exc:
-            result = self._finalize_job(job.id, "UPDATE_FAILED", error_detail=str(exc))
+            error_detail = _bounded_error_detail(str(exc))
+            result = self._finalize_job(job.id, "UPDATE_FAILED", error_detail=error_detail)
             LOGGER.error(
                 "Runner invocation failed.",
                 extra={
                     "event": "worker.runner_failed",
                     "job_id": job.id,
                     "comment_identity": job.comment_identity,
-                    "error": str(exc),
+                    "status": "UPDATE_FAILED",
+                    "error_detail": error_detail,
                 },
             )
             return result
 
-        error_detail = response.stderr.strip() or None
+        error_detail = _bounded_error_detail(response.stderr)
+        rejection_reason_code = response.payload.get("reason_code")
         result = self._finalize_job(job.id, response.status, error_detail=error_detail)
         LOGGER.info(
             "Worker finalized job from runner response.",
@@ -82,7 +86,8 @@ class Worker:
                 "job_id": job.id,
                 "comment_identity": job.comment_identity,
                 "status": response.status,
-                "runner_stderr": response.stderr.strip() or None,
+                "rejection_reason_code": rejection_reason_code,
+                "error_detail": error_detail,
             },
         )
         return result
@@ -106,3 +111,12 @@ class Worker:
                 error_detail=error_detail,
             )
         )
+
+
+def _bounded_error_detail(value: str) -> str | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    if len(stripped) <= MAX_ERROR_DETAIL_LENGTH:
+        return stripped
+    return f"{stripped[: MAX_ERROR_DETAIL_LENGTH - 3]}..."
