@@ -175,6 +175,10 @@ That helper script forces `WIKI_AGENT_CONFIG_PATH` to the generated harness TOML
 at `.runtime/integration-harness/wiki-agent.integration.toml`, so the scanner,
 helper commands, and runner all use the same config source.
 
+If you run the command directly instead of using the helper script, `wiki-agent`
+does not add the harness shim directory to `PATH` for you. `reset` generates the
+shim commands, but it does not mutate the parent shell environment.
+
 If you need to run the command manually, use the harness-generated config and exports explicitly:
 
 ```bash

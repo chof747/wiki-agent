@@ -9,6 +9,7 @@ description = "Scheduled Wiki-Go comment agent service skeleton."
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "openai>=1.0.0",
+    "python-dotenv>=1.1.1",
     "psycopg[binary]>=3.3.4",
 ]
 

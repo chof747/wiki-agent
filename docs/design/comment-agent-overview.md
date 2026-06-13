@@ -112,12 +112,15 @@ Configuration precedence is:
 
 1. built-in defaults where applicable
 2. concrete config file passed by `--config`
-3. environment-variable overrides
+3. repo-root `.env` values loaded at process startup
+4. explicit process environment-variable overrides
 
 The repo ships `config.example.toml`. Real deployment config files such as
 `config.toml` are environment-specific and should not be committed. Local and
 harness-backed runs may keep the OpenAI API key in the TOML file to avoid
-split-brain configuration, but committed examples must use placeholders.
+split-brain configuration, or in an uncommitted repo-root `.env` file when that
+is more convenient for local development. Explicit exported environment
+variables still win over `.env`, and committed examples must use placeholders.
 
 ## Current Runtime
 

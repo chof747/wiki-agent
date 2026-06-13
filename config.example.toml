@@ -1,7 +1,7 @@
 bot_name = "marvin"
 
 [postgres]
-dsn = "postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
+dsn = "postgresql://user:password@localhost:5432/db"
 
 [wikigo]
 base_url = "http://127.0.0.1:4010"

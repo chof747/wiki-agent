@@ -10,6 +10,7 @@ from typing import Callable
 
 from wiki_agent.app import WikiAgentApp
 from wiki_agent.config import ConfigError, load_config
+from wiki_agent import environment
 from wiki_agent.logging import configure_logging
 
 
@@ -47,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    environment.load_repo_environment()
     os.environ["WIKI_AGENT_CONFIG_PATH"] = str(args.config.resolve())
 
     try:
