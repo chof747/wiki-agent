@@ -183,6 +183,24 @@ scripts/manual_harness_setup_and_comment.sh
 helper commands, and runner. `seed-comment` uses the explicit admin runtime
 config so ambient shell exports cannot silently switch the helper identity.
 
+### Supported helper contract
+
+The repo-owned integration harness pins Wiki-Go `1.8.9` via the image digest in
+`tools/integration_harness.py`. That pinned version is the supported helper API
+contract for this repo.
+
+The helper commands target one explicit endpoint shape per operation:
+
+- Page read: `GET /api/source/<page-path>`
+- Page save: `POST /api/save/<page-path>` with `text/markdown`
+- Comment list: `GET /api/comments/<page-path>`
+- Comment create: `POST /api/comments/add/<page-path>` with JSON `{"content": "..."}`
+- Comment delete: `DELETE /api/comments/delete/<page-path>/<comment-id>`
+
+If one of those operations fails, the helper must preserve the concrete HTTP
+failure for that attempted endpoint instead of probing alternate endpoint
+shapes.
+
 If you bypass the harness entrypoint and run `wiki-agent` directly, you must
 reconstruct the harness environment yourself. That path is unsupported for
 manual QA except when debugging the harness itself.
