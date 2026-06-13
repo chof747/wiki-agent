@@ -24,13 +24,11 @@ The rules in this document are normative. `must`, `must not`, and `stop here` ar
 3. If the request is a broad or ambiguous initiative, use `to-prd` first, then `to-issues`, then triage the resulting issues.
 4. The agent may create the GitHub issue for a direct chat request, but must stop before implementation until a human approves scope and the issue reaches `ready-for-agent`.
 
-### 2.2 Narrow Exception
+### 2.2 No Docs-Only Exception
 
-The only exception to issue-first work is a trivial docs-only or instructions-only change.
+There is no docs-only bypass for this repository.
 
-This exception does not apply to production code, runtime behavior, architecture, or any change that needs a branch/PR audit trail.
-
-If a supposedly trivial request expands beyond a docs/instructions edit, stop and create an issue.
+Implementation work, including documentation and instructions changes, must go through an issue-scoped branch and worktree.
 
 ## 3. Issue Readiness Gate
 
@@ -84,13 +82,13 @@ Before creating a new implementation branch, the implementer must:
 
 The only exception is when the user explicitly asks to continue existing in-progress work on an existing branch or draft PR.
 
-Typical commands:
+Default command:
 
 ```bash
-git status --short
-git switch main
-git pull --ff-only origin main
+wiki-agent-worktree create <issue-number>
 ```
+
+Operator setup and helper behavior are documented in [Issue Worktree Workflow](../operators/worktree-workflow.md).
 
 ## 7. Branch Creation
 
@@ -104,11 +102,13 @@ Branch prefix rules:
 4. The branch prefix must not be renamed later if the issue is relabeled.
 5. These repo-specific branch prefixes override generic agent defaults such as `codex/` for work in this repository.
 
+The repo-owned `wiki-agent-worktree create <issue-number>` command is the default way to create that branch and its dedicated worktree.
+
 Examples:
 
 ```bash
-git switch -c feat/12-implement-scanner-enqueueing
-git switch -c bug/34-fix-worker-timeout-handling
+wiki-agent-worktree create 12
+wiki-agent-worktree create 34
 ```
 
 The issue title is the default source of truth for the branch slug. Normalize for clarity, but do not change scope or meaning.

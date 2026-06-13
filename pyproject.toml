@@ -17,6 +17,7 @@ dependencies = [
 wiki-agent = "wiki_agent.cli:main"
 wiki-agent-runner = "wiki_agent.runner:main"
 wiki-agent-integration = "tools.integration_harness:main"
+wiki-agent-worktree = "tools.worktree:main"
 wikigo-helper = "tools.wikigo_helper:main"
 wikigo-page = "wiki_agent.wikigo_page_helper:main"
 
