@@ -41,13 +41,13 @@ def test_create_copies_local_state_and_bootstraps_worktree(
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
         if argv == ["git", "rev-parse", "refs/remotes/origin/main"]:
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
-        if argv[:4] == ["gh", "issue", "view", "67"]:
+        if argv[:4] == ["gh", "issue", "view", "71"]:
             return subprocess.CompletedProcess(
                 argv,
                 0,
                 stdout=json.dumps(
                     {
-                        "number": 67,
+                        "number": 71,
                         "state": "OPEN",
                         "title": "Add issue-scoped worktree workflow tooling and local enforcement",
                         "labels": [{"name": "enhancement"}, {"name": "ready-for-agent"}],
@@ -69,10 +69,10 @@ def test_create_copies_local_state_and_bootstraps_worktree(
 
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
 
-    result = worktree.create_worktree(67)
+    result = worktree.create_worktree(71)
 
-    assert result.branch == "feat/67-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement"
-    assert result.path == repo_root.parent / "wiki-agent-worktrees" / "wiki-agent-67"
+    assert result.branch == "feat/71-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement"
+    assert result.path == repo_root.parent / "wiki-agent-worktrees" / "wiki-agent-71"
     assert (result.path / ".env").read_text(encoding="utf-8") == "OPENAI_API_KEY=test\n"
     assert (result.path / ".runtime" / "state.json").read_text(encoding="utf-8") == "{}\n"
     assert (result.path / ".vscode" / "settings.json").read_text(encoding="utf-8") == "{}\n"
@@ -103,13 +103,13 @@ def test_create_requires_ready_for_agent_label(
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
         if argv == ["git", "rev-parse", "refs/remotes/origin/main"]:
             return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
-        if argv[:4] == ["gh", "issue", "view", "67"]:
+        if argv[:4] == ["gh", "issue", "view", "71"]:
             return subprocess.CompletedProcess(
                 argv,
                 0,
                 stdout=json.dumps(
                     {
-                        "number": 67,
+                        "number": 71,
                         "state": "OPEN",
                         "title": "Needs triage first",
                         "labels": [{"name": "needs-triage"}],
@@ -123,7 +123,7 @@ def test_create_requires_ready_for_agent_label(
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
 
     with pytest.raises(SystemExit, match="ready-for-agent"):
-        worktree.create_worktree(67)
+        worktree.create_worktree(71)
 
 
 def test_delete_requires_pr_and_removes_registered_worktree(
@@ -131,7 +131,7 @@ def test_delete_requires_pr_and_removes_registered_worktree(
 ) -> None:
     repo_root = tmp_path / "wiki-agent"
     repo_root.mkdir()
-    worktree_path = repo_root.parent / "wiki-agent-worktrees" / "wiki-agent-67"
+    worktree_path = repo_root.parent / "wiki-agent-worktrees" / "wiki-agent-71"
     worktree_path.mkdir(parents=True)
 
     monkeypatch.setattr(worktree, "resolve_repo_root", lambda: repo_root)
@@ -153,12 +153,12 @@ def test_delete_requires_pr_and_removes_registered_worktree(
                     "branch refs/heads/main\n\n"
                     f"worktree {worktree_path}\n"
                     "HEAD def456\n"
-                    "branch refs/heads/feat/67-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement\n"
+                    "branch refs/heads/feat/71-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement\n"
                 ),
                 stderr="",
             )
         if argv == ["git", "branch", "--show-current"]:
-            return subprocess.CompletedProcess(argv, 0, stdout="feat/67-add-issue-scoped-worktree-workflow\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout="feat/71-add-issue-scoped-worktree-workflow\n", stderr="")
         if argv == ["git", "status", "--short"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv[:4] == ["gh", "pr", "list", "--head"]:
@@ -180,9 +180,9 @@ def test_delete_requires_pr_and_removes_registered_worktree(
 
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
 
-    result = worktree.delete_worktree(67)
+    result = worktree.delete_worktree(71)
 
-    assert result.branch == "feat/67-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement"
+    assert result.branch == "feat/71-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement"
     assert result.path == worktree_path
     assert not worktree_path.exists()
     assert observed[-2:] == [
