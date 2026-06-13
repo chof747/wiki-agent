@@ -224,6 +224,8 @@ Additional rules:
 6. When the repo later adds standard lint, format, or static-analysis checks, update this document to make them part of the baseline.
 7. If an issue exercises a repo-owned integration harness, prefer extending and invoking that harness rather than adding a separate integration command path.
 8. Harness-backed Wiki-Go and Postgres integration coverage remains a future follow-up and is not part of the required `CI / pytest` gate yet.
+9. `config.example.toml` is a placeholder example, not a working harness QA config; harness-backed local verification must use the generated `.runtime/integration-harness/wiki-agent.integration.toml` after `wiki-agent-integration reset`.
+10. When local Postgres is not reachable through the repo fallback DSNs, set `WIKI_AGENT_INTEGRATION_ADMIN_DSN` and `WIKI_AGENT_INTEGRATION_RUNTIME_DSN`, or `WIKI_AGENT_POSTGRES_DSN` when one DSN is correct for both, before running harness commands.
 
 ## 13. Issue Breadcrumbs
 
