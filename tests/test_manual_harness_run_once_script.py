@@ -12,8 +12,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "manual_harness_run_once.sh"
 
 
 def test_manual_harness_run_once_forces_bot_runtime_config(tmp_path: Path) -> None:
-    capture_path = tmp_path / "run-once-env.json"
-    up_capture_path = tmp_path / "harness-up.txt"
+    capture_path = tmp_path / "run-once-argv.json"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
 
@@ -22,13 +21,8 @@ def test_manual_harness_run_once_forces_bot_runtime_config(tmp_path: Path) -> No
         f"""#!/bin/sh
 set -eu
 
-if [ "$1" = "run" ] && [ "$2" = "wiki-agent-integration" ] && [ "$3" = "up" ]; then
-  printf 'up\n' > "{up_capture_path}"
-  exit 0
-fi
-
-if [ "$1" = "run" ] && [ "$2" = "wiki-agent" ] && [ "$3" = "run-once" ]; then
-  python3 -c 'import json, os, pathlib; pathlib.Path("{capture_path}").write_text(json.dumps({{"config_path": os.environ.get("WIKI_AGENT_CONFIG_PATH"), "openai_api_key": os.environ.get("OPENAI_API_KEY"), "wikigo_runtime_config": os.environ.get("WIKIGO_RUNTIME_CONFIG")}}))'
+if [ "$1" = "run" ] && [ "$2" = "wiki-agent-integration" ] && [ "$3" = "run-once" ]; then
+  python3 -c 'import json, pathlib, sys; pathlib.Path("{capture_path}").write_text(json.dumps(sys.argv[1:]))' "$@"
   exit 0
 fi
 
@@ -49,12 +43,11 @@ exit 0
         check=True,
     )
 
-    assert up_capture_path.read_text(encoding="utf-8") == "up\n"
-    payload = json.loads(capture_path.read_text(encoding="utf-8"))
-    assert payload["config_path"] == str(
-        REPO_ROOT / ".runtime" / "integration-harness" / "wiki-agent.integration.toml"
-    )
-    assert payload["wikigo_runtime_config"] is None
+    assert json.loads(capture_path.read_text(encoding="utf-8")) == [
+        "run",
+        "wiki-agent-integration",
+        "run-once",
+    ]
 
 
 def _write_executable(path: Path, content: str) -> None:
