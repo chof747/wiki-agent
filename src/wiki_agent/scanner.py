@@ -36,7 +36,7 @@ class CommentScanAdapter(Protocol):
 
 class WikiGoCommentScanAdapter(CommentScanAdapter):
     def scan_records(self) -> list[object]:
-        return _parse_helper_output(_run_scan_helper())
+        return parse_scan_helper_output(_run_scan_helper())
 
 
 class Scanner:
@@ -93,12 +93,15 @@ class Scanner:
 
 
 def _run_scan_helper() -> str:
-    result = subprocess.run(
-        ["wikigo-comments-scan"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["wikigo-comments-scan"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ScannerError("wikigo-comments-scan executable was not found") from exc
     if result.returncode != 0:
         raise ScannerError(
             "wikigo-comments-scan exited with "
@@ -107,7 +110,7 @@ def _run_scan_helper() -> str:
     return result.stdout
 
 
-def _parse_helper_output(raw_output: str) -> list[object]:
+def parse_scan_helper_output(raw_output: str) -> list[object]:
     stripped = raw_output.strip()
     if not stripped:
         return []

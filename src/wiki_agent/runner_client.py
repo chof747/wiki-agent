@@ -106,10 +106,8 @@ class RunnerClient:
                 f"runner exited with {result.returncode}: {_summarize_stderr(result.stderr)}"
             )
 
-        payload = _parse_response_json(result.stdout)
-        status = payload.get("status")
-        if status not in ALLOWED_RUNNER_STATUSES:
-            raise RunnerInvocationError("runner response contained invalid status")
+        payload = parse_runner_response(result.stdout)
+        status = payload["status"]
 
         return RunnerResponse(status=status, payload=payload, stderr=result.stderr)
 
@@ -127,6 +125,14 @@ def validate_runner_command(value: object) -> RunnerCommand:
         argv.append(item)
 
     return RunnerCommand(argv=tuple(argv))
+
+
+def parse_runner_response(stdout: str) -> dict[str, Any]:
+    payload = _parse_response_json(stdout)
+    status = payload.get("status")
+    if status not in ALLOWED_RUNNER_STATUSES:
+        raise RunnerInvocationError("runner response contained invalid status")
+    return payload
 
 
 def _parse_response_json(stdout: str) -> dict[str, Any]:
