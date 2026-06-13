@@ -118,6 +118,144 @@ def test_admin_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
     )
 
 
+def test_app_env_uses_generated_harness_config_and_clears_helper_identity(monkeypatch, tmp_path: Path) -> None:
+    shims_root = tmp_path / "bin"
+    config_path = tmp_path / "wiki-agent.integration.toml"
+
+    monkeypatch.setattr(integration_harness, "SHIMS_ROOT", shims_root)
+    monkeypatch.setattr(integration_harness, "WIKI_AGENT_CONFIG_PATH", config_path)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("WIKIGO_RUNTIME_CONFIG", "/tmp/ambient-admin.json")
+    monkeypatch.setenv("WIKI_AGENT_CONFIG_PATH", "/tmp/ambient-config.toml")
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://shared:shared@localhost:5432/wiki_agent",
+    )
+
+    env = integration_harness.app_env()
+
+    assert env["PATH"] == f"{shims_root}:/usr/bin"
+    assert env["WIKI_AGENT_CONFIG_PATH"] == str(config_path)
+    assert env["WIKI_AGENT_INTEGRATION_CONFIG"] == str(config_path)
+    assert "WIKIGO_RUNTIME_CONFIG" not in env
+    assert (
+        env[integration_harness.ADMIN_POSTGRES_DSN_ENV]
+        == "postgresql://shared:shared@localhost:5432/wiki_agent"
+    )
+    assert (
+        env[integration_harness.RUNTIME_POSTGRES_DSN_ENV]
+        == "postgresql://shared:shared@localhost:5432/wiki_agent"
+    )
+
+
+def test_helper_env_uses_explicit_runtime_identity(monkeypatch, tmp_path: Path) -> None:
+    shims_root = tmp_path / "bin"
+    admin_config_path = tmp_path / "wikigo-admin-config.json"
+    config_path = tmp_path / "wiki-agent.integration.toml"
+
+    monkeypatch.setattr(integration_harness, "SHIMS_ROOT", shims_root)
+    monkeypatch.setattr(integration_harness, "WIKI_AGENT_CONFIG_PATH", config_path)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("WIKIGO_RUNTIME_CONFIG", "/tmp/ambient-bot.json")
+    monkeypatch.setenv("WIKI_AGENT_CONFIG_PATH", "/tmp/ambient-config.toml")
+
+    env = integration_harness.helper_env(admin_config_path)
+
+    assert env["PATH"] == f"{shims_root}:/usr/bin"
+    assert env["WIKIGO_RUNTIME_CONFIG"] == str(admin_config_path)
+    assert env["WIKI_AGENT_INTEGRATION_CONFIG"] == str(config_path)
+    assert "WIKI_AGENT_CONFIG_PATH" not in env
+
+
+def test_run_once_uses_harness_app_env(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(integration_harness, "up", lambda: observed.setdefault("up", True))
+    monkeypatch.setattr(
+        integration_harness,
+        "app_env",
+        lambda: {
+            "PATH": "/tmp/harness/bin:/usr/bin",
+            "WIKI_AGENT_CONFIG_PATH": "/tmp/wiki-agent.integration.toml",
+        },
+    )
+
+    def fake_run(argv, **kwargs):
+        observed["argv"] = argv
+        observed["env"] = kwargs["env"]
+        return FakeResult()
+
+    monkeypatch.setattr(integration_harness.subprocess, "run", fake_run)
+
+    integration_harness.run_once(dry_run=True)
+
+    assert observed["argv"] == [
+        "uv",
+        "run",
+        "wiki-agent",
+        "run-once",
+        "--config",
+        "/tmp/wiki-agent.integration.toml",
+        "--dry-run",
+    ]
+    assert observed["env"] == {
+        "PATH": "/tmp/harness/bin:/usr/bin",
+        "WIKI_AGENT_CONFIG_PATH": "/tmp/wiki-agent.integration.toml",
+    }
+
+
+def test_seed_comment_uses_admin_runtime_identity(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(integration_harness, "up", lambda: observed.setdefault("up", True))
+    monkeypatch.setattr(integration_harness, "reset", lambda: observed.setdefault("reset", True))
+    monkeypatch.setattr(
+        integration_harness,
+        "helper_env",
+        lambda config_path: {"WIKIGO_RUNTIME_CONFIG": str(config_path)},
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "delete_all_comments",
+        lambda page_path, *, env: observed.setdefault("delete", (page_path, env.copy())),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "create_comment",
+        lambda page_path, comment_text, *, env: observed.setdefault(
+            "create", (page_path, comment_text, env.copy())
+        ),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "truncate_comment_jobs",
+        lambda: observed.setdefault("truncate", True),
+    )
+
+    integration_harness.seed_comment(
+        page_path="team/roadmap",
+        comment_text="@marvin investigate this",
+        reset_comment_jobs=False,
+    )
+
+    assert observed["reset"] is True
+    assert "truncate" not in observed
+    assert observed["delete"] == (
+        "team/roadmap",
+        {"WIKIGO_RUNTIME_CONFIG": str(integration_harness.ADMIN_CONFIG_PATH)},
+    )
+    assert observed["create"] == (
+        "team/roadmap",
+        "@marvin investigate this",
+        {"WIKIGO_RUNTIME_CONFIG": str(integration_harness.ADMIN_CONFIG_PATH)},
+    )
+
+
 def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) -> None:
     timeline = iter([0.0, 0.0, 1.0])
 

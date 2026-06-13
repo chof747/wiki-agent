@@ -49,6 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("reset")
     subparsers.add_parser("test")
     subparsers.add_parser("down")
+    run_once_parser = subparsers.add_parser("run-once")
+    run_once_parser.add_argument("--dry-run", action="store_true")
+    seed_comment_parser = subparsers.add_parser("seed-comment")
+    seed_comment_parser.add_argument("--page", required=True)
+    seed_comment_parser.add_argument("--text", required=True)
+    seed_comment_parser.add_argument(
+        "--reset-comment-jobs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     args = parser.parse_args(argv)
 
     if args.command == "up":
@@ -65,6 +75,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "down":
         down()
+        return 0
+    if args.command == "run-once":
+        run_once(dry_run=args.dry_run)
+        return 0
+    if args.command == "seed-comment":
+        seed_comment(
+            page_path=args.page,
+            comment_text=args.text,
+            reset_comment_jobs=args.reset_comment_jobs,
+        )
         return 0
 
     parser.error("unsupported command")
@@ -113,12 +133,7 @@ def reset() -> None:
 
 
 def run_test() -> None:
-    env = os.environ.copy()
-    env["PATH"] = f"{SHIMS_ROOT}:{env['PATH']}"
-    env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
-    env["WIKI_AGENT_INTEGRATION_CONFIG"] = str(WIKI_AGENT_CONFIG_PATH)
-    env[ADMIN_POSTGRES_DSN_ENV] = admin_postgres_dsn()
-    env[RUNTIME_POSTGRES_DSN_ENV] = runtime_postgres_dsn()
+    env = app_env()
     result = subprocess.run(
         [
             "uv",
@@ -264,8 +279,26 @@ def allocate_port() -> int:
 
 
 def helper_env(config_path: Path) -> dict[str, str]:
-    env = os.environ.copy()
+    env = _base_env()
     env["WIKIGO_RUNTIME_CONFIG"] = str(config_path)
+    env.pop("WIKI_AGENT_CONFIG_PATH", None)
+    return env
+
+
+def app_env() -> dict[str, str]:
+    env = _base_env()
+    env["WIKI_AGENT_CONFIG_PATH"] = str(WIKI_AGENT_CONFIG_PATH)
+    env.pop("WIKIGO_RUNTIME_CONFIG", None)
+    return env
+
+
+def _base_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{SHIMS_ROOT}:{env['PATH']}"
+    env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
+    env["WIKI_AGENT_INTEGRATION_CONFIG"] = str(WIKI_AGENT_CONFIG_PATH)
+    env[ADMIN_POSTGRES_DSN_ENV] = admin_postgres_dsn()
+    env[RUNTIME_POSTGRES_DSN_ENV] = runtime_postgres_dsn()
     return env
 
 
@@ -372,6 +405,97 @@ def write_shims() -> None:
             encoding="utf-8",
         )
         shim_path.chmod(0o755)
+
+
+def run_once(*, dry_run: bool = False) -> None:
+    up()
+    env = app_env()
+    argv = [
+        "uv",
+        "run",
+        "wiki-agent",
+        "run-once",
+        "--config",
+        env["WIKI_AGENT_CONFIG_PATH"],
+    ]
+    if dry_run:
+        argv.append("--dry-run")
+    _run_passthrough(argv, env=env)
+
+
+def seed_comment(*, page_path: str, comment_text: str, reset_comment_jobs: bool = True) -> None:
+    up()
+    reset()
+    if reset_comment_jobs:
+        truncate_comment_jobs()
+    env_admin = helper_env(ADMIN_CONFIG_PATH)
+    delete_all_comments(page_path, env=env_admin)
+    create_comment(page_path, comment_text, env=env_admin)
+
+
+def truncate_comment_jobs() -> None:
+    with psycopg.connect(runtime_postgres_dsn()) as connection, connection.cursor() as cursor:
+        cursor.execute("TRUNCATE TABLE comment_jobs RESTART IDENTITY")
+        connection.commit()
+
+
+def delete_all_comments(page_path: str, *, env: dict[str, str]) -> None:
+    result = subprocess.run(
+        [str(SHIMS_ROOT / "wikigo-comments"), "list", page_path],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr or result.stdout or "unable to list comments")
+
+    for comment in json.loads(result.stdout):
+        delete_result = subprocess.run(
+            [str(SHIMS_ROOT / "wikigo-comments"), "delete", comment["id"], page_path],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if delete_result.returncode != 0:
+            raise SystemExit(delete_result.stderr or delete_result.stdout or "unable to delete comment")
+
+
+def create_comment(page_path: str, comment_text: str, *, env: dict[str, str]) -> None:
+    content_path = write_temp_markdown(comment_text)
+    try:
+        result = subprocess.run(
+            [str(SHIMS_ROOT / "wikigo-comments"), "create", page_path, str(content_path)],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise SystemExit(result.stderr or result.stdout or "unable to create comment")
+    finally:
+        content_path.unlink(missing_ok=True)
+
+
+def _run_passthrough(argv: list[str], *, env: dict[str, str]) -> None:
+    result = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr or result.stdout or f"command failed: {' '.join(argv)}")
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=os.sys.stderr)
 
 
 def _toml_string(value: str) -> str:

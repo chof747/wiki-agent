@@ -161,35 +161,36 @@ QA plans, operator runbooks, and manual harness instructions should name the req
 
 ### Manual `run-once` against the harness
 
-Running `wiki-agent run-once --config config.toml` directly is not enough for harness-backed manual QA.
-The scanner and runner expect the repo-local `wikigo-*` shim commands on `PATH`,
-and those shims now read the generated harness TOML via `WIKI_AGENT_CONFIG_PATH`.
+Use the harness entrypoint for manual runtime verification so the generated config,
+shim `PATH`, Postgres DSNs, and explicit Wiki-Go identity come from one source.
 
-Use the repo helper script when possible:
+The supported commands are:
+
+```bash
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration run-once
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run wiki-agent-integration seed-comment --page "__tests__/scanner-dry-run/eligible" --text "@marvin # Write a 4 line poem."
+```
+
+Thin repo helper scripts delegate to those commands:
 
 ```bash
 scripts/manual_harness_run_once.sh
+scripts/manual_harness_setup_and_comment.sh
 ```
 
-That helper script forces `WIKI_AGENT_CONFIG_PATH` to the generated harness TOML
-at `.runtime/integration-harness/wiki-agent.integration.toml`, so the scanner,
-helper commands, and runner all use the same config source.
+`run-once` uses the generated harness TOML at
+`.runtime/integration-harness/wiki-agent.integration.toml` for the scanner,
+helper commands, and runner. `seed-comment` uses the explicit admin runtime
+config so ambient shell exports cannot silently switch the helper identity.
 
-If you run the command directly instead of using the helper script, `wiki-agent`
-does not add the harness shim directory to `PATH` for you. `reset` generates the
-shim commands, but it does not mutate the parent shell environment.
-
-If you need to run the command manually, use the harness-generated config and exports explicitly:
+If you bypass the harness entrypoint and run `wiki-agent` directly, you must
+reconstruct the harness environment yourself. That path is unsupported for
+manual QA except when debugging the harness itself.
 
 ```bash
-export WIKI_AGENT_POSTGRES_DSN="postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent"
-export PATH="$PWD/.runtime/integration-harness/bin:$PATH"
-export WIKI_AGENT_CONFIG_PATH="$PWD/.runtime/integration-harness/wiki-agent.integration.toml"
-env UV_CACHE_DIR=/private/tmp/uv-cache \
-  uv run wiki-agent run-once --config "$PWD/.runtime/integration-harness/wiki-agent.integration.toml"
+scripts/manual_harness_setup_and_comment.sh
+scripts/manual_harness_run_once.sh
 ```
-
-If `wikigo-comments-scan` is missing, that means the harness shim directory is not on `PATH` for the current shell or command invocation.
 
 ## CI Coverage
 
