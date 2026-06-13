@@ -86,6 +86,27 @@ The current implementation supports a scanner-only dry-run at `wiki-agent run-on
 
 Without `--dry-run`, the current implementation executes one app-owned **Comment Agent** cycle before exiting.
 
+### Installation shakedown
+
+`wiki-agent check` performs an operator-facing installation shakedown before the
+long-running **Comment Agent** is enabled.
+
+The command loads the normal runtime config, ensures Postgres connectivity and
+the service-owned `comment_jobs` schema bootstrap, executes the non-mutating
+`wikigo-comments-scan` helper boundary, and smoke-checks the configured
+**Runner** subprocess.
+
+The **Runner** smoke check does not call OpenAI and does not attempt a page
+update. It sends an intentionally invalid prompt envelope and requires the
+runner to finalize that invocation as `UPDATE_FAILED` on stdout.
+
+`wiki-agent check` writes one JSON object to stdout describing the per-check
+results. Exit codes are:
+
+- `0`: all checks passed
+- `1`: one or more checks failed
+- `2`: CLI usage or configuration loading failed before checks could run
+
 ## Configuration Model
 
 The current configuration contract is intentionally small:
@@ -129,6 +150,7 @@ The repo currently provides:
 - Python 3.14 project setup with `uv` and `hatchling`
 - `src/wiki_agent/` package layout
 - `wiki-agent run` and `wiki-agent run-once` CLI commands
+- `wiki-agent check` installation shakedown command
 - stdlib-based config loading and JSON logging
 - a foreground service loop with singleton lock enforcement and clean shutdown handling
 - a real single-shot **Scanner** dry-run path via `wikigo-comments-scan`

@@ -19,7 +19,7 @@ That enables the repo-owned `pre-commit` hook that blocks direct commits on `mai
 Run the command from the control checkout on a clean, up-to-date `main`:
 
 ```bash
-wiki-agent-worktree create <issue-number>
+uv run wiki-agent-worktree create <issue-number>
 ```
 
 The helper:
@@ -49,7 +49,7 @@ They stay ignored by Git, so they do not count as meaningful dirty state during 
 After the branch has a pull request and the worktree is clean, remove the worktree directory with:
 
 ```bash
-wiki-agent-worktree delete <issue-number>
+uv run dwiki-agent-worktree delete <issue-number>
 ```
 
 The helper:

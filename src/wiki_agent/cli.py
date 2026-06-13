@@ -9,6 +9,7 @@ from types import FrameType
 from typing import Callable
 
 from wiki_agent.app import WikiAgentApp
+from wiki_agent.check import run_installation_shakedown
 from wiki_agent.config import ConfigError, load_config
 from wiki_agent import environment
 from wiki_agent.logging import configure_logging
@@ -22,25 +23,18 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run")
-    run_parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config.toml"),
-        help="Path to the runtime configuration file.",
-    )
+    _add_config_argument(run_parser)
 
     run_once_parser = subparsers.add_parser("run-once")
-    run_once_parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config.toml"),
-        help="Path to the runtime configuration file.",
-    )
+    _add_config_argument(run_once_parser)
     run_once_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Scan once and report normalized eligible comment events without mutating state.",
     )
+
+    check_parser = subparsers.add_parser("check")
+    _add_config_argument(check_parser)
 
     return parser
 
@@ -55,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
     except ConfigError as exc:
         parser.exit(status=2, message=f"configuration error: {exc}\n")
+
+    if args.command == "check":
+        return run_installation_shakedown(config, config_path=args.config)
 
     configure_logging(config.service.log_level)
     app = WikiAgentApp(config)
@@ -91,3 +88,12 @@ def _run_service(app: WikiAgentApp) -> int:
 
 def _restore_signal(signum: int, handler: int | Callable[[int, FrameType | None], None] | None) -> None:
     signal.signal(signum, handler)
+
+
+def _add_config_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.toml"),
+        help="Path to the runtime configuration file.",
+    )
