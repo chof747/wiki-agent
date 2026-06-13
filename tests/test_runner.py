@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -82,6 +83,57 @@ def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == "gpt-4.1-mini"
     assert openai_calls[0]["timeout"] == 12.5
+
+
+def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        (
+            "OPENAI_API_KEY=dotenv-openai-key\n"
+            "WIKI_AGENT_RUNNER_OPENAI_MODEL=gpt-4.1-nano\n"
+            "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES=111\n"
+            "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES=222\n"
+            "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS=7.5\n"
+        ),
+        encoding="utf-8",
+    )
+    settings_seen: dict[str, object] = {}
+
+    monkeypatch.setattr(runner.environment, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
+    def fake_generate_runner_decision(_prompt: str, settings: runner.RunnerSettings) -> runner.RunnerDecision:
+        settings_seen["settings"] = settings
+        return runner.RunnerDecision(action="update", final_page_content="# Replacement page\n")
+
+    monkeypatch.setattr(runner, "_read_page", lambda _target_page: "# Current page\n")
+    monkeypatch.setattr(runner, "_load_prompt_template", lambda: "{{PROMPT}}")
+    monkeypatch.setattr(
+        runner,
+        "render_prompt",
+        lambda **_kwargs: "rendered prompt",
+    )
+    monkeypatch.setattr(runner, "_generate_runner_decision", fake_generate_runner_decision)
+    monkeypatch.setattr(runner, "_save_page", lambda _target_page, _content: None)
+    monkeypatch.setattr(runner, "_delete_comment", lambda _comment_identity, _target_page: None)
+    monkeypatch.setattr(runner, "_list_comments", lambda _target_page: [])
+    monkeypatch.setattr(
+        runner.sys,
+        "stdin",
+        io.StringIO(json.dumps(_envelope(original_comment_text="@marvin update", prompt="update"))),
+    )
+    monkeypatch.setattr(runner.sys, "stdout", io.StringIO())
+
+    assert runner.main() == 0
+    assert settings_seen["settings"] == runner.RunnerSettings(
+        api_key="dotenv-openai-key",
+        openai_model="gpt-4.1-nano",
+        max_input_bytes=111,
+        max_output_bytes=222,
+        model_timeout_seconds=7.5,
+    )
 
 
 def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Path) -> None:
@@ -544,7 +596,23 @@ def _run_runner(
     env = os.environ.copy()
     env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
     env["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
-    env.setdefault("OPENAI_API_KEY", "test-openai-key")
+    for name in (
+        "OPENAI_API_KEY",
+        "WIKI_AGENT_CONFIG_PATH",
+        "WIKI_AGENT_RUNNER_OPENAI_MODEL",
+        "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES",
+        "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES",
+        "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
+    ):
+        env.pop(name, None)
+    if not (extra_env and "WIKI_AGENT_CONFIG_PATH" in extra_env):
+        env["OPENAI_API_KEY"] = "test-openai-key"
+        env["WIKI_AGENT_RUNNER_OPENAI_MODEL"] = runner.DEFAULT_OPENAI_MODEL
+        env["WIKI_AGENT_RUNNER_MAX_INPUT_BYTES"] = str(runner.DEFAULT_MAX_INPUT_BYTES)
+        env["WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES"] = str(runner.DEFAULT_MAX_OUTPUT_BYTES)
+        env["WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS"] = str(
+            runner.DEFAULT_MODEL_TIMEOUT_SECONDS
+        )
     if extra_env:
         env.update(extra_env)
 

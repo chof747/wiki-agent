@@ -17,6 +17,8 @@ def test_main_loads_root_dotenv_before_running_command(monkeypatch, tmp_path: Pa
 
     monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
     monkeypatch.delenv("WIKI_AGENT_POSTGRES_DSN", raising=False)
+    monkeypatch.delenv(integration_harness.RUNTIME_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.delenv(integration_harness.ADMIN_POSTGRES_DSN_ENV, raising=False)
     monkeypatch.setattr(
         integration_harness,
         "up",
@@ -35,6 +37,8 @@ def test_main_preserves_exported_environment_over_root_dotenv(monkeypatch, tmp_p
     observed: list[str | None] = []
 
     monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv(integration_harness.RUNTIME_POSTGRES_DSN_ENV, raising=False)
+    monkeypatch.delenv(integration_harness.ADMIN_POSTGRES_DSN_ENV, raising=False)
     monkeypatch.setenv(
         "WIKI_AGENT_POSTGRES_DSN",
         "postgresql://exported:exported@localhost:5432/wiki_agent",
@@ -53,13 +57,14 @@ def test_load_or_create_state_creates_runtime_directory(monkeypatch, tmp_path: P
     state_path = tmp_path / "runtime" / "integration-harness" / "state.json"
 
     monkeypatch.setattr(integration_harness, "STATE_PATH", state_path)
+    monkeypatch.setattr(integration_harness, "allocate_port", lambda: 4010)
 
     state = integration_harness.load_or_create_state()
 
     assert state_path.exists()
     assert state_path.parent.is_dir()
-    assert state["base_url"].startswith("http://127.0.0.1:")
-    assert isinstance(state["port"], int)
+    assert state["base_url"] == "http://127.0.0.1:4010"
+    assert state["port"] == 4010
 
 
 def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_path: Path) -> None:

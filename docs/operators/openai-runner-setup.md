@@ -1,8 +1,8 @@
 # OpenAI Runner Setup
 
 This guide shows how to configure the OpenAI-backed `wiki-agent-runner` through
-the main `wiki-agent` TOML config so manual QA and operator runs do not depend
-on a second hidden environment-variable contract.
+the main `wiki-agent` TOML config and the repo-root `.env` file used by local
+entrypoints.
 
 ## 1. Put the runner and Wiki-Go settings in `config.toml`
 
@@ -39,6 +39,16 @@ Current meanings:
 - `WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES`: max `final_page_content` size for `action="update"` before save
 - `WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS`: OpenAI SDK request timeout
 
+Local startup precedence is:
+
+1. built-in defaults
+2. `config.toml`
+3. repo-root `.env`
+4. explicit exported environment variables
+
+This means `.env` can fill in local secrets or overrides without replacing
+values already exported by the calling shell.
+
 `wiki-agent` passes the config path through to both the helper commands and the
 runner subprocess, so `run` and `run-once` can use one file end to end.
 
@@ -48,7 +58,20 @@ runner subprocess, so `run` and `run-once` can use one file end to end.
 wiki-agent run --config config.toml
 ```
 
-## 3. Optional: override the Runner command itself
+## 3. Optional: keep local secrets in repo-root `.env`
+
+Instead of putting secrets in `config.toml`, you can keep them in an
+uncommitted repo-root `.env` file:
+
+```dotenv
+OPENAI_API_KEY=sk-your-real-key-here
+WIKI_AGENT_POSTGRES_DSN=postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent
+```
+
+`wiki-agent`, `wiki-agent-runner`, and `wiki-agent-integration` load that file
+automatically at startup. Exported shell variables still take precedence.
+
+## 4. Optional: override the Runner command itself
 
 Most deployments should keep:
 
@@ -68,7 +91,7 @@ export WIKI_AGENT_RUNNER_COMMAND_JSON='["/opt/wiki-agent/bin/wiki-agent-runner"]
 
 This changes the runner subprocess command without changing the committed config.
 
-## 4. Minimal end-to-end local example
+## 5. Minimal end-to-end local example
 
 ```bash
 cat > config.toml <<'EOF'
@@ -101,10 +124,11 @@ EOF
 wiki-agent run-once --config config.toml
 ```
 
-## 5. Security note
+## 6. Security note
 
 Putting the OpenAI key in TOML is now supported for local and harness-backed
 manual runs because it removes a major source of operator error.
 
 Do not commit real secrets. Prefer an uncommitted local config such as
-`config.toml`, and keep committed examples on placeholder values.
+`config.toml`, an uncommitted repo-root `.env`, or both, and keep committed
+examples on placeholder values.

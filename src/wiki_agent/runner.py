@@ -11,6 +11,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from wiki_agent import environment
 from wiki_agent.config import load_config
 
 
@@ -130,6 +131,7 @@ class RunnerEnvelope:
 
 def main(argv: list[str] | None = None) -> int:
     del argv
+    environment.load_repo_environment()
 
     try:
         envelope = RunnerEnvelope.from_stdin()
