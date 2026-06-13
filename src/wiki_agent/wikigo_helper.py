@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 
+SUPPORTED_WIKIGO_VERSION = "1.8.9"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="wikigo-helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -325,109 +328,26 @@ def extract_markdown(payload: bytes) -> str:
 
 
 def read_comments_payload(session: WikiGoSession, page: str) -> dict[str, Any]:
-    encoded = urllib.parse.quote(page, safe="")
-    endpoints = [
-        f"/api/comments/{quote_page(page)}",
-        f"/api/comments?path={encoded}",
-        f"/api/comment/{quote_page(page)}",
-        f"/api/comment?path={encoded}",
-        f"/api/discussion/{quote_page(page)}",
-        f"/api/discussions/{quote_page(page)}",
-        f"/api/comments/list/{quote_page(page)}",
-    ]
-
-    last_error: BaseException | None = None
-    for endpoint in endpoints:
-        try:
-            payload = json.loads(session.request("GET", endpoint).decode("utf-8"))
-        except SystemExit as exc:
-            last_error = exc
-            continue
-        if isinstance(payload, dict):
-            return payload
-
-    if last_error is not None:
-        raise last_error
-    raise SystemExit("unable to read comments")
+    endpoint = f"/api/comments/{quote_page(page)}"
+    payload = json.loads(session.request("GET", endpoint).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"GET {endpoint} did not return a JSON object")
+    return payload
 
 
 def read_page_source(session: WikiGoSession, page: str) -> bytes:
-    endpoints = [
-        f"/api/source/{quote_page(page)}",
-        f"/api/document/{quote_page(page)}",
-    ]
-    last_error: BaseException | None = None
-    for endpoint in endpoints:
-        try:
-            return session.request("GET", endpoint)
-        except SystemExit as exc:
-            last_error = exc
-            continue
-
-    if last_error is not None:
-        raise last_error
-    raise SystemExit("unable to read page source")
+    endpoint = f"/api/source/{quote_page(page)}"
+    return session.request("GET", endpoint)
 
 
 def delete_comment(session: WikiGoSession, comment_id: str, page: str) -> None:
-    delete_endpoints = []
-    if page:
-        delete_endpoints.append(
-            ("DELETE", f"/api/comments/delete/{quote_page(page)}/{urllib.parse.quote(comment_id)}", None, None)
-        )
-
-    delete_endpoints.extend(
-        [
-            ("DELETE", f"/api/comment/{urllib.parse.quote(comment_id)}", None, None),
-            ("DELETE", f"/api/comments/{urllib.parse.quote(comment_id)}", None, None),
-            ("POST", f"/api/comment/{urllib.parse.quote(comment_id)}/delete", None, None),
-            ("POST", f"/api/comments/{urllib.parse.quote(comment_id)}/delete", None, None),
-            ("POST", f"/api/comment/delete/{urllib.parse.quote(comment_id)}", None, None),
-            ("POST", f"/api/comments/delete/{urllib.parse.quote(comment_id)}", None, None),
-        ]
-    )
-
-    for method, endpoint, body, content_type in delete_endpoints:
-        try:
-            session.request(method, endpoint, body=body, content_type=content_type)
-            return
-        except SystemExit:
-            continue
-
-    body = json.dumps({"id": comment_id}).encode("utf-8")
-    for endpoint in (
-        "/api/comment/delete",
-        "/api/comments/delete",
-        "/api/comment/remove",
-        "/api/comments/remove",
-    ):
-        try:
-            session.request("POST", endpoint, body=body, content_type="application/json")
-            return
-        except SystemExit:
-            continue
-
-    raise SystemExit(f"unable to delete comment id {comment_id}: no known delete endpoint worked")
+    endpoint = f"/api/comments/delete/{quote_page(page)}/{urllib.parse.quote(comment_id)}"
+    session.request("DELETE", endpoint)
 
 
 def create_comment(session: WikiGoSession, page: str, content: str) -> dict[str, Any]:
-    attempts = [
-        (f"/api/comments/add/{quote_page(page)}", {"content": content}),
-        (f"/api/comments/{quote_page(page)}", {"content": content}),
-        (f"/api/comment/{quote_page(page)}", {"content": content}),
-        ("/api/comments", {"path": page, "content": content}),
-        ("/api/comment", {"path": page, "content": content}),
-        ("/api/comments/create", {"path": page, "content": content}),
-        ("/api/comment/create", {"path": page, "content": content}),
-    ]
-
-    for endpoint, payload in attempts:
-        try:
-            return session.post_json(endpoint, payload)
-        except SystemExit:
-            continue
-
-    raise SystemExit(f"unable to create comment on page {page}: no known create endpoint worked")
+    endpoint = f"/api/comments/add/{quote_page(page)}"
+    return session.post_json(endpoint, {"content": content})
 
 
 def discover_pages(session: WikiGoSession) -> list[str]:
