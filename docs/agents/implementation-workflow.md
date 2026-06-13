@@ -85,7 +85,7 @@ The only exception is when the user explicitly asks to continue existing in-prog
 Default command:
 
 ```bash
-wiki-agent-worktree create <issue-number>
+uv run wiki-agent-worktree create <issue-number>
 ```
 
 Operator setup and helper behavior are documented in [Issue Worktree Workflow](../operators/worktree-workflow.md).
@@ -107,8 +107,8 @@ The repo-owned `wiki-agent-worktree create <issue-number>` command is the defaul
 Examples:
 
 ```bash
-wiki-agent-worktree create 12
-wiki-agent-worktree create 34
+uv run wiki-agent-worktree create 12
+uv run wiki-agent-worktree create 34
 ```
 
 The issue title is the default source of truth for the branch slug. Normalize for clarity, but do not change scope or meaning.
