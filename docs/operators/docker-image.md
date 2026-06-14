@@ -25,7 +25,22 @@ wiki-agent run --config /config/config.toml
 
 Mount your runtime config at `/config/config.toml`. Supply secrets and configuration through that mounted TOML and/or environment variables. Do not bake secrets into the image.
 
-There is no Docker healthcheck in this slice. Wait for the local health/status endpoint work before relying on a container `HEALTHCHECK`.
+The image includes a default Docker healthcheck:
+
+```text
+wiki-agent check --config /config/config.toml
+```
+
+Default timing:
+
+- 60s interval
+- 30s timeout
+- 30s start period
+- 3 retries
+
+Docker marks the container healthy only when that full shakedown exits `0`. This means the health signal covers config loading, Postgres connectivity/bootstrap readiness, the Wiki-Go helper boundary, and the configured Runner smoke invocation through the existing `wiki-agent check` path.
+
+If that full shakedown is too slow or too frequent for your environment, override or disable the healthcheck in your own Compose or service configuration.
 
 ## Compose snippet
 
@@ -40,6 +55,9 @@ services:
       - ./wiki-agent/config.toml:/config/config.toml:ro
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+    healthcheck:
+      interval: 2m
+      timeout: 45s
 ```
 
 Wire Postgres and Wiki-Go connectivity through the mounted config and your existing network setup.
@@ -59,6 +77,7 @@ Build the image locally:
 
 ```bash
 docker build -t wiki-agent:local .
+docker inspect --format='{{json .Config.Healthcheck}}' wiki-agent:local
 ```
 
 Run safe installed entrypoint smoke checks:
