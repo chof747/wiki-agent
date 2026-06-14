@@ -57,6 +57,16 @@ def test_publish_workflow_targets_ghcr_contract() -> None:
     assert "latest" in workflow
 
 
+def test_ci_workflow_runs_for_prs_but_not_main_pushes() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "pull_request:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "push:" not in workflow
+
+
 def test_docker_operator_doc_covers_runtime_usage() -> None:
     doc = (REPO_ROOT / "docs" / "operators" / "docker-image.md").read_text(
         encoding="utf-8"
