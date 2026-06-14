@@ -51,3 +51,26 @@ def test_main_loads_repo_dotenv_before_loading_config(monkeypatch, tmp_path: Pat
     assert cli.main(["run-once", "--dry-run", "--config", str(config_path)]) == 0
     assert captured["dry_run"] is True
     assert captured["config"].postgres.dsn == "postgresql://dotenv:dotenv@localhost:5432/wiki_agent"
+
+
+def test_main_routes_check_command_without_building_app(monkeypatch) -> None:
+    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    captured: dict[str, object] = {}
+
+    def fake_run_installation_shakedown(config, *, config_path: Path, stdout=None):  # type: ignore[no-untyped-def]
+        captured["config"] = config
+        captured["config_path"] = config_path
+        captured["stdout"] = stdout
+        return 0
+
+    monkeypatch.delenv("WIKI_AGENT_CONFIG_PATH", raising=False)
+    monkeypatch.setenv(
+        "WIKI_AGENT_POSTGRES_DSN",
+        "postgresql://check:check@localhost:5432/check_db",
+    )
+    monkeypatch.setattr(cli, "run_installation_shakedown", fake_run_installation_shakedown)
+    monkeypatch.setattr(cli, "WikiAgentApp", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("app should not be built")))
+
+    assert cli.main(["check", "--config", str(config_path)]) == 0
+    assert captured["config"].postgres.dsn == "postgresql://check:check@localhost:5432/check_db"
+    assert captured["config_path"] == config_path

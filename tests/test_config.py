@@ -17,8 +17,9 @@ def test_env_override_for_postgres_dsn(monkeypatch) -> None:
     assert config.postgres.dsn.endswith("/override_db")
 
 
-def test_load_config_reads_wikigo_and_runner_openai_settings() -> None:
+def test_load_config_reads_wikigo_and_runner_openai_settings(monkeypatch) -> None:
     config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     config = load_config(config_path)
 

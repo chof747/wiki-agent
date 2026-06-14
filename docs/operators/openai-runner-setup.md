@@ -58,6 +58,33 @@ runner subprocess, so `run` and `run-once` can use one file end to end.
 wiki-agent run --config config.toml
 ```
 
+## 2a. Run the installation shakedown first
+
+Before enabling the long-running service, run:
+
+```bash
+wiki-agent check --config config.toml
+```
+
+`wiki-agent check` writes one JSON object to stdout with `ok` plus per-check
+results for:
+
+- config loading
+- Postgres connectivity and `comment_jobs` schema readiness
+- the non-mutating `wikigo-comments-scan` helper boundary
+- the configured runner subprocess
+
+Exit codes are:
+
+- `0` when every check passes
+- `1` when one or more checks fail
+- `2` when CLI usage or configuration loading fails before checks run
+
+The runner probe is intentionally local-only. It sends an invalid prompt
+envelope and requires the runner to return a finalized `UPDATE_FAILED`
+response, which proves the subprocess contract without making an OpenAI call or
+attempting Wiki-Go mutations.
+
 ## 3. Optional: keep local secrets in repo-root `.env`
 
 Instead of putting secrets in `config.toml`, you can keep them in an
@@ -121,6 +148,7 @@ scan_interval = 60
 stale_processing_timeout = 900
 EOF
 
+wiki-agent check --config config.toml
 wiki-agent run-once --config config.toml
 ```
 
