@@ -1,10 +1,10 @@
 # Main Branch Protection
 
-This repo's required merge gate for `main` is the GitHub Actions status check `CI / pytest`.
+Configure GitHub branch protection for `main` so that changes land through pull requests and cannot merge until the repo's required status check passes.
 
-Configure GitHub branch protection for `main` so that pull requests cannot merge until that check passes.
+## Required settings
 
-## Required setting
+Enable **Require a pull request before merging**.
 
 Enable **Require status checks to pass before merging** and mark `CI / pytest` as a required check.
 
@@ -15,9 +15,8 @@ That check is emitted by:
 
 ## Recommended companion settings
 
-These are recommended operator settings for `main`, but they are not the mandatory requirement for this issue:
+These are recommended operator settings for `main`, but they are not part of the required baseline for this issue:
 
-- Require a pull request before merging.
 - Require branches to be up to date before merging.
 - Require at least one approving review.
 - Dismiss stale approvals when new commits are pushed.
@@ -26,7 +25,7 @@ These are recommended operator settings for `main`, but they are not the mandato
 
 ## Scope note
 
-The current required gate is intentionally limited to the repo's default fast baseline:
+The current required status-check gate is intentionally limited to the repo's default fast baseline:
 
 ```bash
 uv run pytest
