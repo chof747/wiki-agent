@@ -7,12 +7,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import psycopg
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAGE_PATH = "__tests__/scanner-dry-run/eligible"
 COMMENT_TEXT = "@marvin # Eligible Fixture\n\nUpdated by manual harness test.\n"
 UPDATED_MARKDOWN = "# Eligible Fixture\n\nUpdated by manual harness test."
+REJECTION_COMMENT_TEXT = "@marvin update /other-page too"
+REJECTION_REASON_CODE = "CROSS_PAGE_REQUEST"
+REJECTION_EXPLANATION = "This agent can only update the page where the comment was posted."
 
 
 @pytest.mark.integration
@@ -61,6 +65,79 @@ def test_run_once_updates_page_and_deletes_source_comment(tmp_path: Path) -> Non
         _reset_harness(env=env)
 
 
+@pytest.mark.integration
+def test_run_once_creates_visible_rejection_comment_and_finalizes_job(tmp_path: Path) -> None:
+    script = shutil.which("wiki-agent")
+    assert script is not None
+
+    config_path = _require_path_env("WIKI_AGENT_INTEGRATION_CONFIG")
+    runtime_root = config_path.parent
+    admin_config_path = runtime_root / "wikigo-admin-config.json"
+    bot_config_path = runtime_root / "wikigo-bot-config.json"
+
+    env = os.environ.copy()
+    env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
+    _write_fake_openai_package(
+        tmp_path / "openai",
+        {
+            "action": "reject",
+            "final_page_content": None,
+            "rejection_reason_code": REJECTION_REASON_CODE,
+            "explanation": REJECTION_EXPLANATION,
+        },
+    )
+
+    try:
+        _delete_all_comments(PAGE_PATH, runtime_config=admin_config_path, env=env)
+        source_comment = _post_comment(
+            PAGE_PATH,
+            REJECTION_COMMENT_TEXT,
+            runtime_config=admin_config_path,
+            env=env,
+            tmp_path=tmp_path,
+        )
+        source_comment_id = str(source_comment["id"])
+
+        run_env = _helper_env(runtime_config=bot_config_path, env=env)
+        run_env["OPENAI_API_KEY"] = "test-openai-key"
+        run_env["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{run_env.get('PYTHONPATH', '')}"
+        result = subprocess.run(
+            [script, "run-once", "--config", str(config_path)],
+            cwd=REPO_ROOT,
+            env=run_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        stderr_events = [json.loads(line) for line in result.stderr.splitlines()]
+        assert "worker.runner_failed" not in [event["event"] for event in stderr_events]
+        finalized_event = next(event for event in stderr_events if event["event"] == "worker.job_finalized")
+        assert finalized_event["status"] == "REJECTED_WITH_COMMENT"
+
+        comments = json.loads(
+            _run_helper(["wikigo-comments", "list", PAGE_PATH], runtime_config=admin_config_path, env=env)
+        )
+        assert len(comments) == 1
+        assert all(str(comment["id"]) != source_comment_id for comment in comments)
+        assert comments[0]["author"] == "marvin"
+        assert comments[0]["text"].strip() == _expected_rejection_comment(source_comment_id).strip()
+        assert isinstance(comments[0].get("created_at"), str)
+
+        with psycopg.connect(_require_env("WIKI_AGENT_INTEGRATION_RUNTIME_DSN")) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status FROM comment_jobs WHERE comment_identity = %s",
+                    (source_comment_id,),
+                )
+                row = cursor.fetchone()
+
+        assert row == ("REJECTED_WITH_COMMENT",)
+    finally:
+        _reset_harness(env=env)
+
+
 def _delete_all_comments(page_path: str, *, runtime_config: Path, env: dict[str, str]) -> None:
     comments = json.loads(_run_helper(["wikigo-comments", "list", page_path], runtime_config=runtime_config, env=env))
     for comment in comments:
@@ -78,7 +155,7 @@ def _post_comment(
     runtime_config: Path,
     env: dict[str, str],
     tmp_path: Path,
-) -> None:
+) -> dict[str, object]:
     payload_path = tmp_path / "comment-payload.json"
     payload_path.write_text(json.dumps({"content": comment_text}), encoding="utf-8")
     _run_helper(
@@ -86,6 +163,10 @@ def _post_comment(
         runtime_config=runtime_config,
         env=env,
     )
+    comments = json.loads(
+        _run_helper(["wikigo-comments", "list", page_path], runtime_config=runtime_config, env=env)
+    )
+    return next(comment for comment in comments if comment.get("text") == comment_text.rstrip("\n"))
 
 
 def _reset_harness(*, env: dict[str, str]) -> None:
@@ -127,6 +208,40 @@ def _require_env(name: str) -> str:
 
 def _require_path_env(name: str) -> Path:
     return Path(_require_env(name))
+
+
+def _expected_rejection_comment(source_comment_id: str) -> str:
+    return (
+        f'<!-- wiki-agent:rejection source_comment_id="{source_comment_id}" '
+        f'reason_code="{REJECTION_REASON_CODE}" -->\n\n'
+        "Marvin could not process this request.\n\n"
+        f"> {REJECTION_COMMENT_TEXT}\n\n"
+        f"Reason (`{REJECTION_REASON_CODE}`): {REJECTION_EXPLANATION}\n"
+    )
+
+
+def _write_fake_openai_package(path: Path, output_payload: dict[str, object]) -> None:
+    path.mkdir()
+    (path / "__init__.py").write_text(
+        (
+            "import json\n"
+            "import types\n"
+            "\n"
+            f"OUTPUT_PAYLOAD = {output_payload!r}\n"
+            "\n"
+            "class OpenAI:\n"
+            "    def __init__(self, *, api_key=None, timeout=None):\n"
+            "        self.api_key = api_key\n"
+            "        self.timeout = timeout\n"
+            "        self.responses = _Responses()\n"
+            "\n"
+            "class _Responses:\n"
+            "    def create(self, **kwargs):\n"
+            "        del kwargs\n"
+            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(OUTPUT_PAYLOAD))\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_fake_runner(path: Path) -> Path:
