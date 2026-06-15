@@ -134,6 +134,53 @@ def test_repository_enqueue_keeps_terminal_job_terminal() -> None:
     assert row["prompt"] == "tighten intro"
 
 
+def test_repository_enqueue_completed_duplicate_reconciles_as_already_processed() -> None:
+    database = FakeDatabase()
+    repository = CommentJobRepository(
+        "postgresql://example:test@localhost:5432/wiki_agent",
+        connect=database.connect,
+    )
+    first_seen = datetime(2026, 5, 24, 20, 0, tzinfo=UTC)
+    second_seen = first_seen + timedelta(minutes=10)
+
+    inserted = repository.enqueue_event(_event(comment_identity="comment-1"), scanned_at=first_seen)
+    repository.update_job_status(inserted.job.id, "SUCCESS", completed_at=first_seen + timedelta(minutes=1))
+    reconciled = repository.enqueue_event(
+        _event(comment_identity="comment-1", prompt="tighten intro again"),
+        scanned_at=second_seen,
+    )
+
+    assert reconciled.action == "already_processed"
+    assert len(database.rows) == 1
+    row = database.rows[0]
+    assert row["status"] == "ALREADY_PROCESSED"
+    assert row["receipt_count"] == 2
+    assert row["last_scanned_at"] == second_seen
+    assert row["prompt"] == "tighten intro"
+
+
+def test_repository_enqueue_new_comment_identity_after_failure_creates_new_job() -> None:
+    database = FakeDatabase()
+    repository = CommentJobRepository(
+        "postgresql://example:test@localhost:5432/wiki_agent",
+        connect=database.connect,
+    )
+    scanned_at = datetime(2026, 5, 24, 20, 0, tzinfo=UTC)
+
+    first = repository.enqueue_event(_event(comment_identity="comment-1"), scanned_at=scanned_at)
+    repository.update_job_status(first.job.id, "UPDATE_FAILED", completed_at=scanned_at + timedelta(minutes=1))
+    second = repository.enqueue_event(
+        _event(comment_identity="comment-2", prompt="retry this"),
+        scanned_at=scanned_at + timedelta(minutes=2),
+    )
+
+    assert first.action == "inserted"
+    assert second.action == "inserted"
+    assert [row["comment_identity"] for row in database.rows] == ["comment-1", "comment-2"]
+    assert database.rows[0]["status"] == "UPDATE_FAILED"
+    assert database.rows[1]["status"] == "queued"
+
+
 def test_repository_claims_queued_jobs_in_fifo_order() -> None:
     database = FakeDatabase()
     repository = CommentJobRepository(
@@ -477,6 +524,14 @@ class FakeCursor:
         if query.startswith("UPDATE comment_jobs SET receipt_count = receipt_count + 1,"):
             assert params is not None
             row = _find_row(self._database.rows, params[1])
+            row["receipt_count"] += 1
+            row["last_scanned_at"] = params[0]
+            self._result = [_row_tuple(row)]
+            return
+        if query.startswith("UPDATE comment_jobs SET status = 'ALREADY_PROCESSED',"):
+            assert params is not None
+            row = _find_row(self._database.rows, params[1])
+            row["status"] = "ALREADY_PROCESSED"
             row["receipt_count"] += 1
             row["last_scanned_at"] = params[0]
             self._result = [_row_tuple(row)]
