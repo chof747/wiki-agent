@@ -415,7 +415,7 @@ def test_runner_truncates_long_original_comment_in_rejection_comment(tmp_path: P
 def test_runner_returns_update_failed_when_replacement_comment_confirmation_fails(
     tmp_path: Path,
 ) -> None:
-    result, _, helper_log_path, _ = _run_runner(
+    result, state_path, helper_log_path, _ = _run_runner(
         tmp_path,
         page_markdown="# Current page\n",
         openai_output={
@@ -438,6 +438,9 @@ def test_runner_returns_update_failed_when_replacement_comment_confirmation_fail
         "comments.create",
         "comments.list",
     ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["deleted_comment_ids"] == []
 
 
 def test_runner_returns_delete_failed_after_confirmed_rejection_when_delete_confirmation_fails(
