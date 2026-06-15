@@ -17,6 +17,8 @@ def test_dockerfile_defines_runtime_image_contract() -> None:
     assert "dist/*.whl" in dockerfile
     assert 'ENTRYPOINT ["wiki-agent"]' in dockerfile
     assert 'CMD ["run", "--config", "/config/config.toml"]' in dockerfile
+    assert "HEALTHCHECK --interval=60s --timeout=30s --start-period=30s --retries=3" in dockerfile
+    assert 'CMD ["wiki-agent", "check", "--config", "/config/config.toml"]' in dockerfile
     assert "bash curl" in dockerfile
     assert "USER wiki-agent" in dockerfile
 
@@ -55,6 +57,16 @@ def test_publish_workflow_targets_ghcr_contract() -> None:
     assert "latest" in workflow
 
 
+def test_ci_workflow_runs_for_prs_but_not_main_pushes() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "pull_request:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "push:" not in workflow
+
+
 def test_docker_operator_doc_covers_runtime_usage() -> None:
     doc = (REPO_ROOT / "docs" / "operators" / "docker-image.md").read_text(
         encoding="utf-8"
@@ -68,3 +80,9 @@ def test_docker_operator_doc_covers_runtime_usage() -> None:
     assert "public" in doc
     assert "workflow_dispatch" in doc
     assert "healthcheck" in doc.lower()
+    assert "wiki-agent check --config /config/config.toml" in doc
+    assert "60s interval" in doc
+    assert "30s timeout" in doc
+    assert "30s start period" in doc
+    assert "3 retries" in doc
+    assert "override" in doc.lower()
