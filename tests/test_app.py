@@ -100,6 +100,31 @@ def test_run_logs_already_processed_duplicate_count(caplog) -> None:
     assert enqueue_summary.skipped_terminal_jobs == 0
 
 
+def test_run_logs_skipped_terminal_duplicate_count(caplog) -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle(), enqueue_actions=["skipped_terminal"])
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1")])
+    shutdown = FakeShutdownEvent([True])
+    app = WikiAgentApp(
+        config,
+        scanner=scanner,
+        worker=worker,
+        repository=repository,
+        shutdown_event=shutdown,
+    )
+
+    with caplog.at_level(logging.INFO):
+        return_code = app.run()
+
+    assert return_code == 0
+    enqueue_summary = next(
+        record for record in caplog.records if getattr(record, "event", None) == "scanner.enqueue_completed"
+    )
+    assert enqueue_summary.already_processed_jobs == 0
+    assert enqueue_summary.skipped_terminal_jobs == 1
+
+
 def test_run_logs_and_continues_after_scan_failure(caplog) -> None:
     config = load_config(_fixture_config_path())
     repository = FakeServiceRepository(lock=FakeLockHandle())
