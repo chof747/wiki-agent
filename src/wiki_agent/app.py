@@ -168,6 +168,7 @@ class WikiAgentApp:
 
 
 def _log_enqueue_summary(results: list["EnqueueResult"]) -> None:
+    already_processed = sum(1 for result in results if result.action == "already_processed")
     inserted = sum(1 for result in results if result.action == "inserted")
     refreshed = sum(1 for result in results if result.action == "refreshed")
     receipt_refreshed = sum(1 for result in results if result.action == "receipt_refreshed")
@@ -177,6 +178,7 @@ def _log_enqueue_summary(results: list["EnqueueResult"]) -> None:
         extra={
             "event": "scanner.enqueue_completed",
             "eligible_comment_events": len(results),
+            "already_processed_jobs": already_processed,
             "inserted_jobs": inserted,
             "refreshed_jobs": refreshed,
             "receipt_refreshed_jobs": receipt_refreshed,

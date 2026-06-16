@@ -46,6 +46,29 @@ def test_worker_maps_runner_invocation_failure_to_update_failed() -> None:
     assert repository.updated == [(1, "UPDATE_FAILED", "runner emitted invalid JSON on stdout")]
 
 
+def test_worker_persists_already_processed_runner_status() -> None:
+    repository = FakeRepository(job=_job())
+    runner_client = FakeRunnerClient(
+        response=RunnerResponse(
+            status="ALREADY_PROCESSED",
+            payload={"status": "ALREADY_PROCESSED"},
+            stderr="source comment already completed\n",
+        )
+    )
+
+    worker = Worker(_config(), repository=repository, runner_client=runner_client)
+    result = worker.run_once()
+
+    assert result == WorkerRunResult(
+        invocation=InvocationOutcome(
+            job=repository.updated_jobs[-1],
+            status="ALREADY_PROCESSED",
+            error_detail="source comment already completed",
+        )
+    )
+    assert repository.updated == [(1, "ALREADY_PROCESSED", "source comment already completed")]
+
+
 def test_worker_noops_when_queue_is_empty() -> None:
     repository = FakeRepository(job=None)
     runner_client = FakeRunnerClient(response=RunnerResponse(status="SUCCESS", payload={"status": "SUCCESS"}, stderr=""))
