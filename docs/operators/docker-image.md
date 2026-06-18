@@ -86,6 +86,7 @@ Run safe installed entrypoint smoke checks:
 docker run --rm wiki-agent:local --help
 docker run --rm --entrypoint wikigo-helper wiki-agent:local --help
 docker run --rm --entrypoint wikigo-page wiki-agent:local --help
+docker run --rm --entrypoint sh wiki-agent:local -lc 'command -v wikigo-comments-scan && command -v wikigo-helper && command -v wikigo-page'
 ```
 
 `wiki-agent-runner --help` is intentionally not part of the smoke checks because the runner currently expects a prompt envelope on stdin rather than offering a safe help mode.
