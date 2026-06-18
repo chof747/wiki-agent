@@ -18,6 +18,12 @@ TERMINAL_STATUSES = {
     "DELETE_FAILED",
 }
 
+COMPLETED_STATUSES = {
+    "SUCCESS",
+    "REJECTED_WITH_COMMENT",
+    "ALREADY_PROCESSED",
+}
+
 SERVICE_ADVISORY_LOCK_KEY = 704_007
 
 
@@ -215,6 +221,30 @@ error_detail"""
                         job_id,
                     ),
                 )
+            elif status in COMPLETED_STATUSES:
+                cursor.execute(
+                    """UPDATE comment_jobs SET status = 'ALREADY_PROCESSED',
+receipt_count = receipt_count + 1,
+last_scanned_at = %s
+WHERE id = %s
+RETURNING
+id,
+source_system,
+comment_identity,
+target_page,
+original_comment_text,
+prompt,
+source_metadata,
+status,
+receipt_count,
+first_scanned_at,
+last_scanned_at,
+claimed_at,
+completed_at,
+error_detail""",
+                    (observed_at, job_id),
+                )
+                action = "already_processed"
             else:
                 cursor.execute(
                     """UPDATE comment_jobs SET receipt_count = receipt_count + 1,

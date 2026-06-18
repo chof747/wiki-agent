@@ -77,6 +77,54 @@ def test_run_marks_stale_jobs_scans_and_drains_worker_until_queue_is_empty(caplo
     ]
 
 
+def test_run_logs_already_processed_duplicate_count(caplog) -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle(), enqueue_actions=["already_processed"])
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1")])
+    shutdown = FakeShutdownEvent([True])
+    app = WikiAgentApp(
+        config,
+        scanner=scanner,
+        worker=worker,
+        repository=repository,
+        shutdown_event=shutdown,
+    )
+
+    with caplog.at_level(logging.INFO):
+        return_code = app.run()
+
+    assert return_code == 0
+    enqueue_summary = next(record for record in caplog.records if getattr(record, "event", None) == "scanner.enqueue_completed")
+    assert enqueue_summary.already_processed_jobs == 1
+    assert enqueue_summary.skipped_terminal_jobs == 0
+
+
+def test_run_logs_skipped_terminal_duplicate_count(caplog) -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle(), enqueue_actions=["skipped_terminal"])
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1")])
+    shutdown = FakeShutdownEvent([True])
+    app = WikiAgentApp(
+        config,
+        scanner=scanner,
+        worker=worker,
+        repository=repository,
+        shutdown_event=shutdown,
+    )
+
+    with caplog.at_level(logging.INFO):
+        return_code = app.run()
+
+    assert return_code == 0
+    enqueue_summary = next(
+        record for record in caplog.records if getattr(record, "event", None) == "scanner.enqueue_completed"
+    )
+    assert enqueue_summary.already_processed_jobs == 0
+    assert enqueue_summary.skipped_terminal_jobs == 1
+
+
 def test_run_logs_and_continues_after_scan_failure(caplog) -> None:
     config = load_config(_fixture_config_path())
     repository = FakeServiceRepository(lock=FakeLockHandle())
@@ -147,11 +195,12 @@ def _events(records: list[logging.LogRecord]) -> list[str]:
 
 
 class FakeServiceRepository:
-    def __init__(self, *, lock: FakeLockHandle | None) -> None:
+    def __init__(self, *, lock: FakeLockHandle | None, enqueue_actions: list[str] | None = None) -> None:
         self.lock = lock
         self.schema_ensured = False
         self.marked_stale: list[timedelta] = []
         self.enqueued: list[str] = []
+        self._enqueue_actions = list(enqueue_actions or [])
 
     def try_acquire_singleton_lock(self) -> FakeLockHandle | None:
         return self.lock
@@ -167,7 +216,7 @@ class FakeServiceRepository:
         self.enqueued.append(event.comment_identity)
         scanned_at = datetime(2026, 5, 24, 20, 0, tzinfo=UTC)
         return EnqueueResult(
-            action="inserted",
+            action=self._enqueue_actions.pop(0) if self._enqueue_actions else "inserted",
             job=CommentJob(
                 id=len(self.enqueued),
                 source_system="wiki-go",

@@ -15,6 +15,11 @@ from typing import Any
 
 import psycopg
 from wiki_agent import environment
+from wiki_agent.wikigo_helper import (
+    WikiGoSession,
+    create_comment as create_wikigo_comment,
+    quote_page,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -121,13 +126,26 @@ def up() -> None:
 
 def reset() -> None:
     state = load_or_create_state()
-    env_admin = helper_env(ADMIN_CONFIG_PATH)
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     ensure_runtime_database()
-    ensure_user(env_admin, BOT_USERNAME, BOT_PASSWORD, role="admin")
+    admin_session = WikiGoSession(
+        base_url=state["base_url"],
+        username=ADMIN_USERNAME,
+        password=ADMIN_PASSWORD,
+    )
+    ensure_user_in_process(admin_session, BOT_USERNAME, BOT_PASSWORD, role="admin")
+    bot_session = WikiGoSession(
+        base_url=state["base_url"],
+        username=BOT_USERNAME,
+        password=BOT_PASSWORD,
+    )
 
-    delete_documents(env_admin, [doc["path"] for doc in fixture["documents"]])
-    create_documents_and_comments(env_admin, fixture)
+    delete_documents_in_process(admin_session, [doc["path"] for doc in fixture["documents"]])
+    create_documents_and_comments_in_process(
+        admin_session=admin_session,
+        bot_session=bot_session,
+        fixture=fixture,
+    )
 
     print(f"Seeded scanner dry-run fixture set at {state['base_url']}")
 
@@ -671,6 +689,31 @@ def ensure_user(env_admin: dict[str, str], username: str, password: str, *, role
             update_payload.unlink(missing_ok=True)
 
 
+def ensure_user_in_process(
+    admin_session: WikiGoSession, username: str, password: str, *, role: str
+) -> None:
+    payload = {
+        "username": username,
+        "password": password,
+        "role": role,
+    }
+    try:
+        admin_session.post_json("/api/users", payload)
+        return
+    except SystemExit:
+        update_payload = {
+            "username": username,
+            "new_password": password,
+            "role": role,
+        }
+        admin_session.request(
+            "PUT",
+            "/api/users",
+            body=json.dumps(update_payload).encode("utf-8"),
+            content_type="application/json",
+        )
+
+
 def delete_documents(env_admin: dict[str, str], doc_paths: list[str]) -> None:
     for path in sorted(doc_paths, key=lambda item: item.count("/"), reverse=True):
         result = subprocess.run(
@@ -683,6 +726,15 @@ def delete_documents(env_admin: dict[str, str], doc_paths: list[str]) -> None:
         )
         if result.returncode not in {0, 1}:
             raise SystemExit(result.stderr or result.stdout or f"unable to delete document {path}")
+
+
+def delete_documents_in_process(admin_session: WikiGoSession, doc_paths: list[str]) -> None:
+    for path in sorted(doc_paths, key=lambda item: item.count("/"), reverse=True):
+        try:
+            admin_session.request("DELETE", f"/api/document/{quote_page(path)}")
+        except SystemExit as exc:
+            if "HTTP 404" not in str(exc):
+                raise
 
 
 def create_documents_and_comments(env_admin: dict[str, str], fixture: dict[str, Any]) -> None:
@@ -730,6 +782,29 @@ def create_documents_and_comments(env_admin: dict[str, str], fixture: dict[str, 
                     raise SystemExit(result.stderr or result.stdout or "unable to add fixture comment")
             finally:
                 payload.unlink(missing_ok=True)
+
+
+def create_documents_and_comments_in_process(
+    *,
+    admin_session: WikiGoSession,
+    bot_session: WikiGoSession,
+    fixture: dict[str, Any],
+) -> None:
+    for document in fixture["documents"]:
+        admin_session.post_json(
+            "/api/document/create",
+            {"title": document["title"], "path": document["path"]},
+        )
+        admin_session.request(
+            "POST",
+            f"/api/save/{quote_page(str(document['path']))}",
+            body=str(document["markdown"]).encode("utf-8"),
+            content_type="text/markdown",
+        )
+
+        for comment in document.get("comments", []):
+            session = admin_session if comment["author"] == ADMIN_USERNAME else bot_session
+            create_wikigo_comment(session, str(document["path"]), str(comment["content"]))
 
 
 def write_temp_json(payload: dict[str, Any]) -> Path:

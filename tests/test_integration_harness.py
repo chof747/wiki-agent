@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -254,6 +255,117 @@ def test_seed_comment_uses_admin_runtime_identity(monkeypatch) -> None:
         "@marvin investigate this",
         {"WIKIGO_RUNTIME_CONFIG": str(integration_harness.ADMIN_CONFIG_PATH)},
     )
+
+
+def test_reset_seeds_fixtures_without_helper_subprocess_fan_out(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fixture_path = tmp_path / "fixture.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "title": "Fixture Page",
+                        "path": "team/roadmap",
+                        "markdown": "# Team Roadmap\n",
+                        "comments": [
+                            {"author": "admin", "content": "@marvin tighten intro"},
+                            {"author": "marvin", "content": "@marvin self authored"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    observed: dict[str, object] = {}
+
+    class FakeSession:
+        def __init__(self, *, base_url: str, username: str, password: str) -> None:
+            observed.setdefault("sessions", []).append((base_url, username, password))
+
+        def request(
+            self,
+            method: str,
+            endpoint: str,
+            *,
+            body: bytes | None = None,
+            content_type: str | None = None,
+        ) -> bytes:
+            observed.setdefault("requests", []).append(
+                (method, endpoint, body, content_type)
+            )
+            return b"{}"
+
+        def post_json(self, endpoint: str, payload: dict[str, object]) -> dict[str, object]:
+            observed.setdefault("posts", []).append((endpoint, payload))
+            return {}
+
+    monkeypatch.setattr(integration_harness, "FIXTURE_PATH", fixture_path)
+    monkeypatch.setattr(
+        integration_harness,
+        "load_or_create_state",
+        lambda: {"base_url": "http://127.0.0.1:4010", "port": 4010},
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "ensure_runtime_database",
+        lambda: observed.setdefault("db", True),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "ensure_user",
+        lambda *_args, **_kwargs: pytest.fail("reset should not use helper-based ensure_user"),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "delete_documents",
+        lambda *_args, **_kwargs: pytest.fail(
+            "reset should not use helper-based document deletion"
+        ),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "create_documents_and_comments",
+        lambda *_args, **_kwargs: pytest.fail(
+            "reset should not use helper-based document/comment creation"
+        ),
+    )
+    monkeypatch.setattr(integration_harness, "WikiGoSession", FakeSession, raising=False)
+
+    integration_harness.reset()
+
+    assert observed["db"] is True
+    assert observed["sessions"] == [
+        ("http://127.0.0.1:4010", "admin", "admin"),
+        ("http://127.0.0.1:4010", "marvin", "marvin-pass"),
+    ]
+    assert observed["posts"] == [
+        (
+            "/api/users",
+            {"username": "marvin", "password": "marvin-pass", "role": "admin"},
+        ),
+        ("/api/document/create", {"title": "Fixture Page", "path": "team/roadmap"}),
+        (
+            "/api/comments/add/team/roadmap",
+            {"content": "@marvin tighten intro"},
+        ),
+        (
+            "/api/comments/add/team/roadmap",
+            {"content": "@marvin self authored"},
+        ),
+    ]
+    assert observed["requests"] == [
+        ("DELETE", "/api/document/team/roadmap", None, None),
+        (
+            "POST",
+            "/api/save/team/roadmap",
+            b"# Team Roadmap\n",
+            "text/markdown",
+        ),
+    ]
 
 
 def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) -> None:
