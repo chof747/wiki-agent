@@ -31,6 +31,23 @@ RUN useradd \
 
 COPY --from=build /opt/venv /opt/venv
 
+RUN set -eu; \
+    for name in wikigo-config wikigo-api wikigo-comments wikigo-comments-scan wikigo-create-document wikigo-page; do \
+        case "$name" in \
+            wikigo-config) helper_args='config' ;; \
+            wikigo-api) helper_args='api' ;; \
+            wikigo-comments) helper_args='comments' ;; \
+            wikigo-comments-scan) helper_args='comments-scan' ;; \
+            wikigo-create-document) helper_args='create-document' ;; \
+            wikigo-page) helper_args='page' ;; \
+        esac; \
+        { \
+            printf '%s\n' '#!/bin/sh'; \
+            printf '%s\n' "exec wikigo-helper ${helper_args} \"\$@\""; \
+        } > "/usr/local/bin/${name}"; \
+        chmod 0755 "/usr/local/bin/${name}"; \
+    done
+
 ENV PATH="/opt/venv/bin:${PATH}"
 
 HEALTHCHECK --interval=60s --timeout=30s --start-period=30s --retries=3 \
