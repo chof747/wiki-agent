@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from wiki_agent.domain import ALLOWED_INVOCATION_STATUSES
+
 if TYPE_CHECKING:
     from wiki_agent.comment_jobs import CommentJob
 
@@ -25,8 +27,6 @@ class PromptEnvelope:
     original_comment_text: str
     target_page: str
     comment_identity: str
-    source_metadata: dict[str, Any]
-    constraints: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -34,8 +34,6 @@ class PromptEnvelope:
             "original_comment_text": self.original_comment_text,
             "target_page": self.target_page,
             "comment_identity": self.comment_identity,
-            "source_metadata": self.source_metadata,
-            "constraints": self.constraints,
         }
 
 
@@ -51,17 +49,6 @@ class RunnerInvocationError(RuntimeError):
 
 
 DEFAULT_RUNNER_TIMEOUT = timedelta(minutes=15)
-ALLOWED_RUNNER_STATUSES = frozenset(
-    {
-        "SUCCESS",
-        "ALREADY_PROCESSED",
-        "REJECTED_WITH_COMMENT",
-        "UPDATE_FAILED",
-        "DELETE_FAILED",
-    }
-)
-
-
 class RunnerClient:
     def __init__(
         self,
@@ -78,13 +65,6 @@ class RunnerClient:
             original_comment_text=job.original_comment_text,
             target_page=job.target_page,
             comment_identity=job.comment_identity,
-            source_metadata=job.source_metadata,
-            constraints={
-                "single_target_scope": {
-                    "target_page": job.target_page,
-                    "mode": "attached_target_page_only",
-                }
-            },
         )
 
     def invoke(self, job: CommentJob) -> RunnerResponse:
@@ -130,7 +110,7 @@ def validate_runner_command(value: object) -> RunnerCommand:
 def parse_runner_response(stdout: str) -> dict[str, Any]:
     payload = _parse_response_json(stdout)
     status = payload.get("status")
-    if status not in ALLOWED_RUNNER_STATUSES:
+    if status not in ALLOWED_INVOCATION_STATUSES:
         raise RunnerInvocationError("runner response contained invalid status")
     return payload
 

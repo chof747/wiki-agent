@@ -29,7 +29,7 @@ The language-agnostic executable invoked by the **Worker** for one **Invocation*
 _Avoid_: library callback, embedded agent loop
 
 **Prompt Envelope**:
-The structured JSON payload passed to the **Runner** on stdin, containing the stripped **Prompt**, original comment text, source metadata, and hard constraints.
+The structured JSON payload passed to the **Runner** on stdin, containing the stripped **Prompt**, original comment text, attached **Target Page**, and **Comment Identity**.
 _Avoid_: raw comment text, unstructured input
 
 **Prompt**:
@@ -226,7 +226,7 @@ _Avoid_: test processing
 - A non-zero runner exit without a valid finalized **Response** maps to `UPDATE_FAILED`.
 - The **Worker** enforces a configurable runner timeout, defaulting to 15 minutes.
 - The **Prompt Envelope** includes both the stripped **Prompt** and the original comment text.
-- The **Prompt Envelope** includes a hard constraint that only the attached **Target Page** may be processed.
+- The **Prompt Envelope** includes the attached **Target Page** and **Comment Identity** needed for the **Runner** workflow.
 - The **Runner** uses Wiki-Go helper commands directly for page and comment operations.
 - The **Runner** owns **Web Research** within an **Invocation**.
 - An **Invocation** may execute zero or more tool calls.

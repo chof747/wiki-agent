@@ -182,13 +182,12 @@ sys.stdout.write(json.dumps({{"status": "SUCCESS"}}))
     assert payload["original_comment_text"].startswith("@marvin")
     assert payload["comment_identity"]
     assert payload["target_page"]
-    assert payload["source_metadata"]["source_system"] == "wiki-go"
-    assert payload["constraints"] == {
-        "single_target_scope": {
-            "mode": "attached_target_page_only",
-            "target_page": payload["target_page"],
-        }
-    }
+    assert sorted(payload.keys()) == [
+        "comment_identity",
+        "original_comment_text",
+        "prompt",
+        "target_page",
+    ]
 
 
 def test_run_service_smoke_handles_sigterm(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
+from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.scanner import Scanner, ScannerError
 from wiki_agent.worker import Worker, WorkerRunResult
 
@@ -108,7 +109,7 @@ class WikiAgentApp:
                 extra={
                     "event": "worker.stale_processing_marked",
                     "stale_processing_jobs": stale_count,
-                    "status": "UPDATE_FAILED",
+                    "status": STATUS_UPDATE_FAILED,
                     "error_detail": "stale processing timeout",
                 },
             )

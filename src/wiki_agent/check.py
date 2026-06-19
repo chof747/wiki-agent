@@ -9,6 +9,7 @@ from typing import Any, TextIO
 
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
+from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.runner_client import RunnerInvocationError, parse_runner_response
 from wiki_agent.scanner import ScannerError, parse_scan_helper_output
 
@@ -162,7 +163,7 @@ def _check_runner(config: AppConfig, *, subprocess_run: Any) -> CheckResult:
             message=f"runner smoke invocation returned invalid output: {exc}",
         )
 
-    if payload.get("status") != "UPDATE_FAILED":
+    if payload.get("status") != STATUS_UPDATE_FAILED:
         return CheckResult(
             name="runner",
             status="failed",

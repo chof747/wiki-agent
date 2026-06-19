@@ -37,15 +37,8 @@ def test_runner_client_sends_prompt_envelope_and_parses_stdout(tmp_path: Path) -
     payload = json.loads(capture_path.read_text())
     assert payload == {
         "comment_identity": "comment-1",
-        "constraints": {
-            "single_target_scope": {
-                "mode": "attached_target_page_only",
-                "target_page": "/pages/example",
-            }
-        },
         "original_comment_text": "@marvin tighten intro",
         "prompt": "tighten intro",
-        "source_metadata": {"author": "alice", "source_system": "wiki-go"},
         "target_page": "/pages/example",
     }
 
