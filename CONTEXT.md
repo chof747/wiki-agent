@@ -116,6 +116,10 @@ _Avoid_: wiki image asset, hotlinked image
 A replacement Wiki-Go comment created by the bot when a request is unclear, impossible, unsafe, unsupported, or violates hard constraints.
 _Avoid_: failure log, hidden rejection
 
+**Failure Comment**:
+A visible Wiki-Go comment created by the bot to explain a terminal failed **Comment Job** to page readers.
+_Avoid_: leftover source comment, operator log, retry prompt
+
 **Rejection Reason Code**:
 A stable machine-readable reason for `REJECTED_WITH_COMMENT`, such as `UNCLEAR_REQUEST` or `CROSS_PAGE_REQUEST`.
 _Avoid_: free-text-only rejection
@@ -211,10 +215,11 @@ _Avoid_: test processing
 - Job ordering uses stable scanner discovery order, represented by the inserted job sequence.
 - A singleton Postgres advisory lock prevents multiple service instances from processing concurrently.
 - A second service instance exits immediately if it cannot acquire the singleton lock.
-- Stale `processing` jobs are marked `UPDATE_FAILED` after a configurable timeout.
+- Stale `processing` jobs are marked `UPDATE_FAILED` after a configurable timeout and get the same **Failure Comment** feedback as other `UPDATE_FAILED` jobs.
 - Failed jobs do not block later queued jobs.
 - Terminal failed jobs are skipped by later scans, even if the original comment remains visible.
 - Editing a failed source comment does not create a new job because the **Comment Identity** is unchanged.
+- A **Failure Comment** explains a terminal failure but is not a retry surface.
 - The **Worker** invokes the **Runner** with one **Prompt Envelope** on stdin.
 - The **Runner** emits exactly one finalized **Response** JSON object on stdout.
 - Runner logs and diagnostics go to stderr.
@@ -256,8 +261,12 @@ _Avoid_: test processing
 - **Completion Order** is strict: **Primary Action** before **Comment Deletion**.
 - If **Comment Deletion** fails after a confirmed page update or confirmed replacement comment, finalize as `DELETE_FAILED`.
 - `DELETE_FAILED` is terminal and is logged rather than automatically retried.
+- `DELETE_FAILED` after a confirmed page update creates a **Failure Comment** because no other bot-authored comment explains the visible leftover source comment.
+- `DELETE_FAILED` after a confirmed **Rejection Comment** does not create a second **Failure Comment** because the **Rejection Comment** already explains the handled outcome.
 - `UPDATE_FAILED` includes provider/model/tool failures, Wiki-Go read failures, save failures, and update confirmation failures before a confirmed successful update.
 - `UPDATE_FAILED` is terminal and keeps the original source comment undeleted for human review.
+- `UPDATE_FAILED` creates a **Failure Comment** and keeps the original source comment undeleted for human review.
+- A **Failure Comment** begins its visible text with the **Bot Name**.
 - No automatic rollback is attempted after an update confirmation failure.
 - If a duplicate is already complete, emit `ALREADY_PROCESSED`.
 - `ALREADY_PROCESSED` is terminal and non-retryable.
@@ -274,6 +283,13 @@ _Avoid_: test processing
 - **Rejection Comments** are authored by the configured bot identity.
 - **Rejection Comments** include a `wiki-agent:` marker, the source comment id, a visible **Rejection Reason Code**, an exact blockquote of the original comment text, and a human-readable explanation.
 - Long original comments in **Rejection Comments** are truncated with a clear note; the full original text remains in the job snapshot.
+- **Failure Comments** are authored by the configured bot identity.
+- **Failure Comments** include a hidden `wiki-agent:` marker, the source comment id, the terminal **Status Code**, and the available failure reason.
+- A **Failure Comment** is not duplicated when a matching failure marker already exists for the same source comment id and terminal **Status Code**.
+- **Failure Comments** visibly include the **Bot Name**, terminal **Status Code**, concise failure reason, and next step.
+- **Failure Comments** do not quote the original source comment because the source comment remains visible when a **Failure Comment** is created.
+- Retrying after `UPDATE_FAILED` requires a new source comment with a new **Comment Identity**.
+- `DELETE_FAILED` is not user-retryable because the **Primary Action** already succeeded.
 - The **Status Code Set** is: `SUCCESS`, `ALREADY_PROCESSED`, `REJECTED_WITH_COMMENT`, `UPDATE_FAILED`, `DELETE_FAILED`.
 - The initial **Rejection Reason Code** set is: `UNCLEAR_REQUEST`, `MULTI_TARGET_REQUEST`, `CROSS_PAGE_REQUEST`, `FORBIDDEN_ACTION`, `UNSUPPORTED_ACTION`, `MISSING_CONTEXT`, `SAFETY_REFUSAL`.
 - `REJECTED_WITH_COMMENT` covers all non-executable requests that are intentionally handled with a replacement comment.
