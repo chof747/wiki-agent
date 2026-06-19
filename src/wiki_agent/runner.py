@@ -13,6 +13,13 @@ from typing import Any
 
 from wiki_agent import environment
 from wiki_agent.config import load_config
+from wiki_agent.domain import (
+    STATUS_DELETE_FAILED,
+    STATUS_REJECTED_WITH_COMMENT,
+    STATUS_SUCCESS,
+    STATUS_UPDATE_FAILED,
+)
+from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output, parse_helper_page_output
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
@@ -116,6 +123,13 @@ class RunnerEnvelope:
         if not isinstance(payload, dict):
             raise RunnerContractError("prompt envelope must be a JSON object")
 
+        expected_keys = {"prompt", "original_comment_text", "target_page", "comment_identity"}
+        unexpected_keys = sorted(set(payload) - expected_keys)
+        if unexpected_keys:
+            raise RunnerContractError(
+                "prompt envelope contains unexpected field(s): " + ", ".join(unexpected_keys)
+            )
+
         prompt = _require_string(payload, "prompt")
         original_comment_text = _require_string(payload, "original_comment_text")
         target_page = _require_string(payload, "target_page")
@@ -136,19 +150,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         envelope = RunnerEnvelope.from_stdin()
     except RunnerContractError as exc:
-        _emit_response("UPDATE_FAILED", "PROMPT_ENVELOPE_INVALID", str(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "PROMPT_ENVELOPE_INVALID", str(exc))
         return 0
 
     try:
         settings = RunnerSettings.from_env()
     except RunnerContractError as exc:
-        _emit_response("UPDATE_FAILED", "RUNNER_CONFIG_INVALID", str(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "RUNNER_CONFIG_INVALID", str(exc))
         return 0
 
     try:
         current_page_content = _read_page(envelope.target_page)
     except HelperCommandError as exc:
-        _emit_response("UPDATE_FAILED", "PAGE_READ_FAILED", str(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "PAGE_READ_FAILED", str(exc))
         return 0
 
     try:
@@ -160,20 +174,20 @@ def main(argv: list[str] | None = None) -> int:
             current_page_content=current_page_content,
         )
     except PromptTemplateError as exc:
-        _emit_response("UPDATE_FAILED", "PROMPT_TEMPLATE_INVALID", str(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "PROMPT_TEMPLATE_INVALID", str(exc))
         return 0
 
     if _utf8_len(rendered_prompt) > settings.max_input_bytes:
-        _emit_response("UPDATE_FAILED", "INPUT_TOO_LARGE", "rendered model input exceeded byte limit")
+        _emit_response(STATUS_UPDATE_FAILED, "INPUT_TOO_LARGE", "rendered model input exceeded byte limit")
         return 0
 
     try:
         decision = _generate_runner_decision(rendered_prompt, settings)
     except ModelOutputError as exc:
-        _emit_response("UPDATE_FAILED", "MODEL_OUTPUT_INVALID", str(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "MODEL_OUTPUT_INVALID", str(exc))
         return 0
     except Exception as exc:
-        _emit_response("UPDATE_FAILED", "MODEL_CALL_FAILED", _bounded_message(exc))
+        _emit_response(STATUS_UPDATE_FAILED, "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
     if decision.action == "update":
@@ -181,28 +195,28 @@ def main(argv: list[str] | None = None) -> int:
         assert final_page_content is not None
 
         if _utf8_len(final_page_content) > settings.max_output_bytes:
-            _emit_response("UPDATE_FAILED", "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
+            _emit_response(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
             return 0
 
         if final_page_content == current_page_content:
-            _emit_response("UPDATE_FAILED", "NO_CONTENT_CHANGE", "model output did not change the current page content")
+            _emit_response(STATUS_UPDATE_FAILED, "NO_CONTENT_CHANGE", "model output did not change the current page content")
             return 0
 
         try:
             _save_page(envelope.target_page, final_page_content)
         except HelperCommandError as exc:
-            _emit_response("UPDATE_FAILED", "PAGE_SAVE_FAILED", str(exc))
+            _emit_response(STATUS_UPDATE_FAILED, "PAGE_SAVE_FAILED", str(exc))
             return 0
 
         try:
             confirmed_markdown = _read_page(envelope.target_page)
         except HelperCommandError as exc:
-            _emit_response("UPDATE_FAILED", "UPDATE_CONFIRMATION_FAILED", str(exc))
+            _emit_response(STATUS_UPDATE_FAILED, "UPDATE_CONFIRMATION_FAILED", str(exc))
             return 0
 
         if confirmed_markdown != final_page_content:
             _emit_response(
-                "UPDATE_FAILED",
+                STATUS_UPDATE_FAILED,
                 "UPDATE_CONFIRMATION_FAILED",
                 "saved page content did not match confirmation fetch",
             )
@@ -217,13 +231,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _create_comment(envelope.target_page, replacement_comment)
         except HelperCommandError as exc:
-            _emit_response("UPDATE_FAILED", "COMMENT_CREATE_FAILED", str(exc))
+            _emit_response(STATUS_UPDATE_FAILED, "COMMENT_CREATE_FAILED", str(exc))
             return 0
 
         try:
             replacement_comments = _list_comments(envelope.target_page)
         except HelperCommandError as exc:
-            _emit_response("UPDATE_FAILED", "REPLACEMENT_CONFIRMATION_FAILED", str(exc))
+            _emit_response(STATUS_UPDATE_FAILED, "REPLACEMENT_CONFIRMATION_FAILED", str(exc))
             return 0
 
         expected_replacement_comment = replacement_comment.strip()
@@ -232,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             for comment in replacement_comments
         ):
             _emit_response(
-                "UPDATE_FAILED",
+                STATUS_UPDATE_FAILED,
                 "REPLACEMENT_CONFIRMATION_FAILED",
                 "replacement comment was not present during confirmation",
             )
@@ -241,24 +255,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _delete_comment(envelope.comment_identity, envelope.target_page)
     except HelperCommandError as exc:
-        _emit_response("DELETE_FAILED", "COMMENT_DELETE_FAILED", str(exc))
+        _emit_response(STATUS_DELETE_FAILED, "COMMENT_DELETE_FAILED", str(exc))
         return 0
 
     try:
         remaining_comments = _list_comments(envelope.target_page)
     except HelperCommandError as exc:
-        _emit_response("DELETE_FAILED", "DELETE_CONFIRMATION_FAILED", str(exc))
+        _emit_response(STATUS_DELETE_FAILED, "DELETE_CONFIRMATION_FAILED", str(exc))
         return 0
 
     if any(comment.get("id") == envelope.comment_identity for comment in remaining_comments):
         _emit_response(
-            "DELETE_FAILED",
+            STATUS_DELETE_FAILED,
             "DELETE_CONFIRMATION_FAILED",
             "source comment still present after delete confirmation",
         )
         return 0
 
-    _emit_response("SUCCESS" if decision.action == "update" else "REJECTED_WITH_COMMENT")
+    _emit_response(STATUS_SUCCESS if decision.action == "update" else STATUS_REJECTED_WITH_COMMENT)
     return 0
 
 
@@ -387,22 +401,9 @@ def _read_page(target_page: str) -> str:
     result = _run_helper(["wikigo-page", "get", target_page])
 
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise HelperCommandError("wikigo-page get emitted invalid JSON") from exc
-
-    if not isinstance(payload, dict):
-        raise HelperCommandError("wikigo-page get must return a JSON object")
-
-    markdown = payload.get("markdown")
-    if isinstance(markdown, str):
-        return markdown
-
-    content = payload.get("content")
-    if isinstance(content, str):
-        return content
-
-    raise HelperCommandError("wikigo-page get response is missing markdown content")
+        return parse_helper_page_output(result.stdout)
+    except WikiGoAdapterError as exc:
+        raise HelperCommandError(str(exc)) from exc
 
 
 def _save_page(target_page: str, markdown: str) -> None:
@@ -439,18 +440,9 @@ def _list_comments(target_page: str) -> list[dict[str, Any]]:
     result = _run_helper(["wikigo-comments", "list", target_page])
 
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise HelperCommandError("wikigo-comments list emitted invalid JSON") from exc
-
-    if not isinstance(payload, list):
-        raise HelperCommandError("wikigo-comments list must return a JSON array")
-
-    comments: list[dict[str, Any]] = []
-    for item in payload:
-        if isinstance(item, dict):
-            comments.append(item)
-    return comments
+        return parse_helper_comments_output(result.stdout)
+    except WikiGoAdapterError as exc:
+        raise HelperCommandError(str(exc)) from exc
 
 
 def _build_rejection_comment(
