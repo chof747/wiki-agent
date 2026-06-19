@@ -13,6 +13,9 @@ from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
 
+from wiki_agent.wikigo_adapter import WikiGoAdapterError, extract_markdown as _extract_markdown
+from wiki_agent.wikigo_adapter import normalize_comments_payload
+
 
 SUPPORTED_WIKIGO_VERSION = "1.8.9"
 
@@ -92,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "comments":
         if args.comments_command == "list":
             payload = read_comments_payload(session, args.page)
-            comments = normalize_comments(payload)
+            comments = normalize_comments_payload(payload)
             if args.mention_only:
                 mention = f"@{config['username']}"
                 comments = [
@@ -119,25 +122,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "page":
         if args.page_command == "get":
-            payload = read_page_source(session, args.page)
-            print(json.dumps({"markdown": extract_markdown(payload)}, ensure_ascii=False))
+            emit_page_get(session, args.page)
             return 0
 
         if args.page_command == "save":
-            session.request(
-                "POST",
-                f"/api/save/{quote_page(args.page)}",
-                body=args.content_file.read_bytes(),
-                content_type="text/markdown",
-            )
-            print(f"saved page: {args.page}")
+            save_page(session, args.page, args.content_file)
             return 0
 
     if args.command == "comments-scan":
         pages = discover_pages(session)
         matches: list[dict[str, Any]] = []
         for page in pages:
-            comments = normalize_comments(session.get_json(f"/api/comments/{quote_page(page)}"))
+            comments = normalize_comments_payload(session.get_json(f"/api/comments/{quote_page(page)}"))
             for comment in comments:
                 if comment["text"].lower().startswith(f"@{str(config['username']).lower()}"):
                     matches.append(
@@ -281,50 +277,29 @@ class WikiGoSession:
 
 
 def normalize_comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_items = payload.get("comments", [])
-    if not isinstance(raw_items, list):
-        return []
-
-    comments: list[dict[str, Any]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        comment_id = item.get("ID")
-        text = item.get("Content")
-        if not isinstance(comment_id, int | str) or not isinstance(text, str):
-            continue
-        comments.append(
-            {
-                "id": str(comment_id),
-                "text": text.strip(),
-                "author": str(item.get("Author", "")),
-                "created_at": item.get("Timestamp"),
-            }
-        )
-    return comments
+    return normalize_comments_payload(payload)
 
 
 def extract_markdown(payload: bytes) -> str:
-    text = payload.decode("utf-8")
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return text
+        return _extract_markdown(payload)
+    except WikiGoAdapterError as exc:
+        raise SystemExit("GET page response is missing markdown content") from exc
 
-    if isinstance(parsed, dict):
-        for key in ("markdown", "content"):
-            value = parsed.get(key)
-            if isinstance(value, str):
-                return value
 
-        document = parsed.get("document")
-        if isinstance(document, dict):
-            for key in ("markdown", "content"):
-                value = document.get(key)
-                if isinstance(value, str):
-                    return value
+def emit_page_get(session: WikiGoSession, page: str) -> None:
+    payload = read_page_source(session, page)
+    print(json.dumps({"markdown": extract_markdown(payload)}, ensure_ascii=False))
 
-    raise SystemExit("GET page response is missing markdown content")
+
+def save_page(session: WikiGoSession, page: str, content_file: Path) -> None:
+    session.request(
+        "POST",
+        f"/api/save/{quote_page(page)}",
+        body=content_file.read_bytes(),
+        content_type="text/markdown",
+    )
+    print(f"saved page: {page}")
 
 
 def read_comments_payload(session: WikiGoSession, page: str) -> dict[str, Any]:

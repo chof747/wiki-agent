@@ -7,22 +7,16 @@ from typing import Any, Callable
 import psycopg
 from psycopg.types.json import Jsonb
 
+from wiki_agent.domain import (
+    COMPLETED_INVOCATION_STATUSES,
+    QUEUE_STATE_PROCESSING,
+    QUEUE_STATE_QUEUED,
+    STATUS_ALREADY_PROCESSED,
+    STATUS_UPDATE_FAILED,
+    TERMINAL_INVOCATION_STATUSES,
+)
 from wiki_agent.scanner import CommentEvent
 
-
-TERMINAL_STATUSES = {
-    "SUCCESS",
-    "ALREADY_PROCESSED",
-    "REJECTED_WITH_COMMENT",
-    "UPDATE_FAILED",
-    "DELETE_FAILED",
-}
-
-COMPLETED_STATUSES = {
-    "SUCCESS",
-    "REJECTED_WITH_COMMENT",
-    "ALREADY_PROCESSED",
-}
 
 SERVICE_ADVISORY_LOCK_KEY = 704_007
 
@@ -141,7 +135,7 @@ FOR UPDATE""",
 
             if existing is None:
                 cursor.execute(
-                    """INSERT INTO comment_jobs (
+                    f"""INSERT INTO comment_jobs (
 source_system,
 comment_identity,
 target_page,
@@ -153,7 +147,7 @@ last_scanned_at,
 status,
 receipt_count
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued', 1)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{QUEUE_STATE_QUEUED}', 1)
 RETURNING
 id,
 source_system,
@@ -209,7 +203,7 @@ completed_at,
 error_detail"""
             action = "refreshed"
 
-            if status == "queued":
+            if status == QUEUE_STATE_QUEUED:
                 cursor.execute(
                     update_query,
                     (
@@ -221,9 +215,9 @@ error_detail"""
                         job_id,
                     ),
                 )
-            elif status in COMPLETED_STATUSES:
+            elif status in COMPLETED_INVOCATION_STATUSES:
                 cursor.execute(
-                    """UPDATE comment_jobs SET status = 'ALREADY_PROCESSED',
+                    f"""UPDATE comment_jobs SET status = '{STATUS_ALREADY_PROCESSED}',
 receipt_count = receipt_count + 1,
 last_scanned_at = %s
 WHERE id = %s
@@ -267,7 +261,7 @@ completed_at,
 error_detail""",
                     (observed_at, job_id),
                 )
-                action = "skipped_terminal" if status in TERMINAL_STATUSES else "receipt_refreshed"
+                action = "skipped_terminal" if status in TERMINAL_INVOCATION_STATUSES else "receipt_refreshed"
 
             row = cursor.fetchone()
             connection.commit()
@@ -277,7 +271,7 @@ error_detail""",
         started_at = claimed_at or datetime.now(tz=UTC)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """SELECT id FROM comment_jobs WHERE status = 'queued'
+                f"""SELECT id FROM comment_jobs WHERE status = '{QUEUE_STATE_QUEUED}'
 ORDER BY id
 LIMIT 1
 FOR UPDATE SKIP LOCKED"""
@@ -288,7 +282,7 @@ FOR UPDATE SKIP LOCKED"""
                 return None
 
             cursor.execute(
-                """UPDATE comment_jobs SET status = 'processing',
+                f"""UPDATE comment_jobs SET status = '{QUEUE_STATE_PROCESSING}',
 claimed_at = %s,
 completed_at = NULL,
 error_detail = NULL
@@ -355,10 +349,10 @@ error_detail""",
         cutoff = observed_now - processing_timeout
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """UPDATE comment_jobs SET status = 'UPDATE_FAILED',
+                f"""UPDATE comment_jobs SET status = '{STATUS_UPDATE_FAILED}',
 completed_at = %s,
 error_detail = 'stale processing timeout'
-WHERE status = 'processing' AND claimed_at < %s
+WHERE status = '{QUEUE_STATE_PROCESSING}' AND claimed_at < %s
 RETURNING id""",
                 (observed_now, cutoff),
             )
@@ -376,8 +370,8 @@ ORDER BY status"""
             by_status = {status: count for status, count in cursor.fetchall()}
             connection.commit()
             return QueueCounts(
-                queued=by_status.get("queued", 0),
-                processing=by_status.get("processing", 0),
+                queued=by_status.get(QUEUE_STATE_QUEUED, 0),
+                processing=by_status.get(QUEUE_STATE_PROCESSING, 0),
                 by_status=by_status,
             )
 

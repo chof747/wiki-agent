@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
+from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.runner_client import RunnerClient, RunnerInvocationError
 
 if TYPE_CHECKING:
@@ -63,14 +64,14 @@ class Worker:
             response = self._runner_client.invoke(job)
         except RunnerInvocationError as exc:
             error_detail = _bounded_error_detail(str(exc))
-            result = self._finalize_job(job.id, "UPDATE_FAILED", error_detail=error_detail)
+            result = self._finalize_job(job.id, STATUS_UPDATE_FAILED, error_detail=error_detail)
             LOGGER.error(
                 "Runner invocation failed.",
                 extra={
                     "event": "worker.runner_failed",
                     "job_id": job.id,
                     "comment_identity": job.comment_identity,
-                    "status": "UPDATE_FAILED",
+                    "status": STATUS_UPDATE_FAILED,
                     "error_detail": error_detail,
                 },
             )

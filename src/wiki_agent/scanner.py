@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from wiki_agent.config import AppConfig
+from wiki_agent.wikigo_adapter import WikiGoAdapterError, normalize_scan_record, parse_scan_helper_output
 
 
 class ScannerError(RuntimeError):
@@ -36,7 +36,10 @@ class CommentScanAdapter(Protocol):
 
 class WikiGoCommentScanAdapter(CommentScanAdapter):
     def scan_records(self) -> list[object]:
-        return parse_scan_helper_output(_run_scan_helper())
+        try:
+            return parse_scan_helper_output(_run_scan_helper())
+        except WikiGoAdapterError as exc:
+            raise ScannerError(str(exc)) from exc
 
 
 class Scanner:
@@ -60,35 +63,27 @@ class Scanner:
         return events
 
     def _normalize_record(self, record: object) -> CommentEvent | None:
-        if not isinstance(record, dict):
-            raise ScannerError("wikigo-comments-scan output must contain objects")
+        try:
+            normalized = normalize_scan_record(record)
+        except WikiGoAdapterError as exc:
+            raise ScannerError(str(exc)) from exc
 
-        original_comment_text = _require_string(record, "comment text", ("body", "comment_text", "text"))
+        original_comment_text = normalized["original_comment_text"]
         if not original_comment_text.startswith(self._bot_mention):
             return None
         if "wiki-agent:" in original_comment_text:
             return None
 
-        author = _resolve_author(record)
+        author = normalized["author"]
         if author is not None and _is_bot_author(author, self._config.bot_name):
             return None
 
-        comment_identity = _require_string(record, "comment identity", ("comment_identity", "comment_id", "id"))
-        target_page = _require_string(record, "target page", ("target_page", "page_path", "page", "path"))
-
-        source_metadata = {
-            "source_system": "wiki-go",
-            **_collect_source_metadata(record),
-        }
-        if author is not None:
-            source_metadata["author"] = author
-
         return CommentEvent(
-            comment_identity=comment_identity,
-            target_page=target_page,
+            comment_identity=normalized["comment_identity"],
+            target_page=normalized["target_page"],
             original_comment_text=original_comment_text,
             prompt=original_comment_text[len(self._bot_mention) :].lstrip(),
-            source_metadata=source_metadata,
+            source_metadata=normalized["source_metadata"],
         )
 
 
@@ -108,86 +103,5 @@ def _run_scan_helper() -> str:
             f"{result.returncode}: {result.stderr.strip() or 'no stderr'}"
         )
     return result.stdout
-
-
-def parse_scan_helper_output(raw_output: str) -> list[object]:
-    stripped = raw_output.strip()
-    if not stripped:
-        return []
-
-    try:
-        payload = json.loads(stripped)
-    except json.JSONDecodeError:
-        return _parse_ndjson(stripped)
-
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        for field in ("comments", "matches"):
-            records = payload.get(field)
-            if isinstance(records, list):
-                return records
-
-    raise ScannerError("wikigo-comments-scan output must be a JSON array, object, or NDJSON stream")
-
-
-def _parse_ndjson(raw_output: str) -> list[object]:
-    records: list[object] = []
-    for line in raw_output.splitlines():
-        if not line.strip():
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise ScannerError("wikigo-comments-scan emitted invalid JSON") from exc
-    return records
-
-
-def _require_string(record: dict[str, Any], field_name: str, aliases: tuple[str, ...]) -> str:
-    for alias in aliases:
-        value = record.get(alias)
-        if isinstance(value, str) and value:
-            return value
-    raise ScannerError(f"wikigo-comments-scan record is missing {field_name}")
-
-
-def _resolve_author(record: dict[str, Any]) -> str | None:
-    author = record.get("author")
-    if isinstance(author, str) and author:
-        return author
-    if isinstance(author, dict):
-        for key in ("name", "login", "username", "display_name"):
-            value = author.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-    for alias in ("author_name", "username", "user"):
-        value = record.get(alias)
-        if isinstance(value, str) and value:
-            return value
-
-    return None
-
-
 def _is_bot_author(author: str, bot_name: str) -> bool:
     return author.lstrip("@").casefold() == bot_name.casefold()
-
-
-def _collect_source_metadata(record: dict[str, Any]) -> dict[str, Any]:
-    excluded = {
-        "author",
-        "author_name",
-        "body",
-        "comment_id",
-        "comment_identity",
-        "comment_text",
-        "id",
-        "page",
-        "page_path",
-        "path",
-        "target_page",
-        "text",
-        "user",
-        "username",
-    }
-    return {key: value for key, value in record.items() if key not in excluded}

@@ -183,6 +183,35 @@ def test_runner_returns_update_failed_when_model_output_does_not_change_page(tmp
     assert state["deleted_comment_ids"] == []
 
 
+def test_runner_rejects_unexpected_prompt_envelope_fields(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        envelope_overrides={
+            "source_metadata": {"source_system": "wiki-go", "author": "alice"},
+            "constraints": {
+                "single_target_scope": {
+                    "target_page": "/pages/example",
+                    "mode": "attached_target_page_only",
+                }
+            },
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "PROMPT_ENVELOPE_INVALID",
+        "message": "prompt envelope contains unexpected field(s): constraints, source_metadata",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
 def test_runner_returns_structured_failure_for_invalid_max_input_bytes_env(tmp_path: Path) -> None:
     result, state_path, helper_log_path, openai_log_path = _run_runner(
         tmp_path,
@@ -570,6 +599,7 @@ def _run_runner(
     strip_created_comment_text: bool = False,
     original_comment_text: str = "@marvin # Rewrite the page\n\nMake it shorter.\n",
     prompt: str = "# Rewrite the page\n\nMake it shorter.\n",
+    envelope_overrides: dict[str, object] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     script = shutil.which("wiki-agent-runner")
     assert script is not None
@@ -621,7 +651,13 @@ def _run_runner(
 
     result = subprocess.run(
         [script],
-        input=json.dumps(_envelope(original_comment_text=original_comment_text, prompt=prompt)),
+        input=json.dumps(
+            _envelope(
+                original_comment_text=original_comment_text,
+                prompt=prompt,
+                overrides=envelope_overrides,
+            )
+        ),
         capture_output=True,
         text=True,
         check=False,
@@ -630,20 +666,21 @@ def _run_runner(
     return result, state_path, helper_log_path, openai_log_path
 
 
-def _envelope(*, original_comment_text: str, prompt: str) -> dict[str, object]:
-    return {
+def _envelope(
+    *,
+    original_comment_text: str,
+    prompt: str,
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload = {
         "prompt": prompt,
         "original_comment_text": original_comment_text,
         "target_page": "/pages/example",
         "comment_identity": "comment-1",
-        "source_metadata": {"source_system": "wiki-go", "author": "alice"},
-        "constraints": {
-            "single_target_scope": {
-                "target_page": "/pages/example",
-                "mode": "attached_target_page_only",
-            }
-        },
     }
+    if overrides:
+        payload.update(overrides)
+    return payload
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
