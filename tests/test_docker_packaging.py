@@ -57,6 +57,9 @@ def test_publish_workflow_targets_ghcr_contract() -> None:
     assert "type=ref,event=branch" in workflow
     assert "{{branch}}-sha-{{sha}}" in workflow
     assert "latest" in workflow
+    assert "Compute docs-only change classification" in workflow
+    assert "No-op for docs-only changes" in workflow
+    assert "from-github-event" in workflow
 
 
 def test_ci_workflow_runs_for_prs_but_not_main_pushes() -> None:
@@ -67,6 +70,9 @@ def test_ci_workflow_runs_for_prs_but_not_main_pushes() -> None:
     assert "pull_request:" in workflow
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
+    assert "Compute docs-only change classification" in workflow
+    assert "No-op for docs-only changes" in workflow
+    assert "from-github-event" in workflow
 
 
 def test_docker_operator_doc_covers_runtime_usage() -> None:
@@ -89,3 +95,20 @@ def test_docker_operator_doc_covers_runtime_usage() -> None:
     assert "30s start period" in doc
     assert "3 retries" in doc
     assert "override" in doc.lower()
+
+
+def test_workflow_docs_cover_docs_only_noop_behavior() -> None:
+    integration_doc = (
+        REPO_ROOT / "docs" / "design" / "integration-harness.md"
+    ).read_text(encoding="utf-8")
+    docker_doc = (REPO_ROOT / "docs" / "operators" / "docker-image.md").read_text(
+        encoding="utf-8"
+    )
+    branch_protection_doc = (
+        REPO_ROOT / "docs" / "operators" / "main-branch-protection.md"
+    ).read_text(encoding="utf-8")
+
+    assert "docs-only" in integration_doc
+    assert "docs-only" in docker_doc
+    assert "docs-only" in branch_protection_doc
+    assert "CI / pytest" in branch_protection_doc
