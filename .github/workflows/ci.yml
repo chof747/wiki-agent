@@ -54,7 +54,7 @@ jobs:
 
       - name: Set up uv
         if: needs.changes.outputs.docs_only != 'true'
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Sync locked dev environment
         if: needs.changes.outputs.docs_only != 'true'
@@ -102,7 +102,7 @@ jobs:
 
       - name: Set up uv
         if: needs.changes.outputs.docs_only != 'true'
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Sync locked dev environment
         if: needs.changes.outputs.docs_only != 'true'
