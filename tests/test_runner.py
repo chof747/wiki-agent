@@ -623,7 +623,7 @@ def _run_runner(
     openai_log_path = tmp_path / "openai-log.jsonl"
     openai_package_root = tmp_path / "openai"
     _write_fake_openai_package(openai_package_root, openai_log_path, openai_output)
-    _write_wikigo_page_helper(tmp_path / "wikigo-page", state_path, helper_log_path)
+    _write_wikigo_helper(tmp_path / "wikigo-helper", state_path, helper_log_path)
     _write_wikigo_comments_helper(tmp_path / "wikigo-comments", state_path, helper_log_path)
 
     env = os.environ.copy()
@@ -733,7 +733,7 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
     )
 
 
-def _write_wikigo_page_helper(path: Path, state_path: Path, log_path: Path) -> None:
+def _write_wikigo_helper(path: Path, state_path: Path, log_path: Path) -> None:
     path.write_text(
         (
             "#!/usr/bin/env python3\n"
@@ -743,9 +743,11 @@ def _write_wikigo_page_helper(path: Path, state_path: Path, log_path: Path) -> N
             f"state_path = pathlib.Path({str(state_path)!r})\n"
             f"log_path = pathlib.Path({str(log_path)!r})\n"
             "state = json.loads(state_path.read_text(encoding='utf-8'))\n"
-            "command = sys.argv[1]\n"
+            "if len(sys.argv) < 3 or sys.argv[1] != 'page':\n"
+            "    raise SystemExit(f'unsupported wikigo-helper args: {sys.argv[1:]}')\n"
+            "command = sys.argv[2]\n"
             "if command == 'get':\n"
-            "    page = sys.argv[2]\n"
+            "    page = sys.argv[3]\n"
             "    line = json.dumps({'command': 'page.get', 'page': page}) + '\\n'\n"
             "    existing = log_path.read_text(encoding='utf-8') if log_path.exists() else ''\n"
             "    log_path.write_text(existing + line, encoding='utf-8')\n"
@@ -753,15 +755,15 @@ def _write_wikigo_page_helper(path: Path, state_path: Path, log_path: Path) -> N
             "    sys.stdout.write(json.dumps({'markdown': markdown}))\n"
             "    raise SystemExit(0)\n"
             "if command == 'save':\n"
-            "    page = sys.argv[2]\n"
-            "    content = pathlib.Path(sys.argv[3]).read_text(encoding='utf-8')\n"
+            "    page = sys.argv[3]\n"
+            "    content = pathlib.Path(sys.argv[4]).read_text(encoding='utf-8')\n"
             "    line = json.dumps({'command': 'page.save', 'page': page, 'content': content}) + '\\n'\n"
             "    existing = log_path.read_text(encoding='utf-8') if log_path.exists() else ''\n"
             "    log_path.write_text(existing + line, encoding='utf-8')\n"
             "    state['saved_markdown'] = content\n"
             "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"
             "    raise SystemExit(0)\n"
-            "raise SystemExit(f'unsupported wikigo-page command: {command}')\n"
+            "raise SystemExit(f'unsupported wikigo-helper page command: {command}')\n"
         ),
         encoding="utf-8",
     )

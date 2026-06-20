@@ -398,7 +398,7 @@ def _load_prompt_template() -> str:
 
 
 def _read_page(target_page: str) -> str:
-    result = _run_helper(["wikigo-page", "get", target_page])
+    result = _run_helper(["wikigo-helper", "page", "get", target_page])
 
     try:
         return parse_helper_page_output(result.stdout)
@@ -413,7 +413,7 @@ def _save_page(target_page: str, markdown: str) -> None:
             handle.write(markdown)
             temp_path = Path(handle.name)
 
-        _run_helper(["wikigo-page", "save", target_page, str(temp_path)])
+        _run_helper(["wikigo-helper", "page", "save", target_page, str(temp_path)])
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)

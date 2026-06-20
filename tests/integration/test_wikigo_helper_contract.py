@@ -35,9 +35,17 @@ def test_wikigo_helper_uses_supported_1_8_9_contract(tmp_path: Path) -> None:
     try:
         _reset_harness(env=env)
 
-        _run_helper(["wikigo-page", "save", PAGE_PATH, str(page_path)], runtime_config=bot_config_path, env=env)
+        _run_helper(
+            ["wikigo-helper", "page", "save", PAGE_PATH, str(page_path)],
+            runtime_config=bot_config_path,
+            env=env,
+        )
         page_payload = json.loads(
-            _run_helper(["wikigo-page", "get", PAGE_PATH], runtime_config=bot_config_path, env=env)
+            _run_helper(
+                ["wikigo-helper", "page", "get", PAGE_PATH],
+                runtime_config=bot_config_path,
+                env=env,
+            )
         )
         assert page_payload["markdown"] == updated_markdown
 

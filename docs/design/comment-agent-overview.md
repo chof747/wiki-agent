@@ -159,7 +159,7 @@ The repo currently provides:
 - stale `processing` cleanup that marks timed-out jobs terminal `UPDATE_FAILED`
 - a **Worker** path that claims one queued job, invokes the external **Runner**, and persists one finalized terminal status
 - a language-agnostic **Runner** subprocess boundary using stdin for the **Prompt Envelope**, stdout for exactly one finalized **Response**, and stderr for diagnostics
-- an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and either applies a confirmed single-page update or executes a confirmed visible rejection-comment workflow using `wikigo-page` and `wikigo-comments`
+- an in-repo `wiki-agent-runner` executable that reads the latest attached page, renders a repo-owned prompt template, makes one OpenAI model call, and either applies a confirmed single-page update or executes a confirmed visible rejection-comment workflow using `wikigo-helper page` and `wikigo-comments`
 - smoke and config tests
 
 Provider credentials and model selection are now part of the main app config so
