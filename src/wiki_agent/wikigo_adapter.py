@@ -116,15 +116,15 @@ def parse_helper_page_output(raw_output: str) -> str:
     try:
         payload = json.loads(raw_output)
     except json.JSONDecodeError as exc:
-        raise WikiGoAdapterError("wikigo-page get emitted invalid JSON") from exc
+        raise WikiGoAdapterError("wikigo-helper page get emitted invalid JSON") from exc
 
     if not isinstance(payload, dict):
-        raise WikiGoAdapterError("wikigo-page get must return a JSON object")
+        raise WikiGoAdapterError("wikigo-helper page get must return a JSON object")
 
     try:
         return extract_markdown(raw_output)
     except WikiGoAdapterError as exc:
-        raise WikiGoAdapterError("wikigo-page get response is missing markdown content") from exc
+        raise WikiGoAdapterError("wikigo-helper page get response is missing markdown content") from exc
 
 
 def _parse_ndjson(raw_output: str) -> list[object]:

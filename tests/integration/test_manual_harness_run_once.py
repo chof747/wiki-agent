@@ -54,7 +54,7 @@ def test_run_once_updates_page_and_deletes_source_comment(tmp_path: Path) -> Non
         assert "worker.job_finalized" in events
         assert "worker.runner_failed" not in events
 
-        page = _run_helper(["wikigo-page", "get", PAGE_PATH], runtime_config=bot_config_path, env=env)
+        page = _run_helper(["wikigo-helper", "page", "get", PAGE_PATH], runtime_config=bot_config_path, env=env)
         assert json.loads(page)["markdown"].rstrip("\n") == UPDATED_MARKDOWN
 
         comments = json.loads(
@@ -258,15 +258,15 @@ def _write_fake_runner(path: Path) -> Path:
             "target_page = envelope['target_page']\n"
             "comment_identity = envelope['comment_identity']\n"
             "updated_markdown = '# Eligible Fixture\\n\\nUpdated by manual harness test.\\n'\n"
-            "subprocess.run(['wikigo-page', 'get', target_page], check=True, capture_output=True, text=True)\n"
+            "subprocess.run(['wikigo-helper', 'page', 'get', target_page], check=True, capture_output=True, text=True)\n"
             "with tempfile.NamedTemporaryFile('w', encoding='utf-8', suffix='.md', delete=False) as handle:\n"
             "    handle.write(updated_markdown)\n"
             "    temp_path = pathlib.Path(handle.name)\n"
             "try:\n"
-            "    subprocess.run(['wikigo-page', 'save', target_page, str(temp_path)], check=True, capture_output=True, text=True)\n"
+            "    subprocess.run(['wikigo-helper', 'page', 'save', target_page, str(temp_path)], check=True, capture_output=True, text=True)\n"
             "finally:\n"
             "    temp_path.unlink(missing_ok=True)\n"
-            "confirmed = subprocess.run(['wikigo-page', 'get', target_page], check=True, capture_output=True, text=True)\n"
+            "confirmed = subprocess.run(['wikigo-helper', 'page', 'get', target_page], check=True, capture_output=True, text=True)\n"
             "if json.loads(confirmed.stdout)['markdown'] != updated_markdown:\n"
             "    sys.stdout.write(json.dumps({'status': 'UPDATE_FAILED', 'error_code': 'UPDATE_CONFIRMATION_FAILED', 'message': 'saved page content did not match confirmation fetch'}))\n"
             "    sys.stdout.write('\\n')\n"

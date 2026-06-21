@@ -407,7 +407,6 @@ def write_shims() -> None:
         "wikigo-comments": ["comments"],
         "wikigo-comments-scan": ["comments-scan"],
         "wikigo-create-document": ["create-document"],
-        "wikigo-page": ["page"],
     }
     for name, helper_args in shim_map.items():
         shim_path = SHIMS_ROOT / name

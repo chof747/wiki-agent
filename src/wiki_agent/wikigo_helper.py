@@ -73,13 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config_file={config['config_file']}")
         return 0
 
-    session = WikiGoSession(
-        base_url=str(config["base_url"]),
-        username=str(config["username"]),
-        password=str(config["password"]),
-    )
-
     if args.command == "api":
+        session = create_session(config)
         body = None
         if args.body_file is not None:
             body = Path(args.body_file).read_bytes()
@@ -93,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "comments":
+        session = create_session(config)
         if args.comments_command == "list":
             payload = read_comments_payload(session, args.page)
             comments = normalize_comments_payload(payload)
@@ -121,15 +117,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     if args.command == "page":
-        if args.page_command == "get":
-            emit_page_get(session, args.page)
-            return 0
-
-        if args.page_command == "save":
-            save_page(session, args.page, args.content_file)
-            return 0
+        return run_page_command(
+            args.page_command,
+            args.page,
+            getattr(args, "content_file", None),
+            config=config,
+        )
 
     if args.command == "comments-scan":
+        session = create_session(config)
         pages = discover_pages(session)
         matches: list[dict[str, Any]] = []
         for page in pages:
@@ -160,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "create-document":
+        session = create_session(config)
         session.post_json(
             "/api/document/create",
             {"title": args.title, "path": args.path},
@@ -175,6 +172,35 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error("unsupported command")
     return 2
+
+
+def run_page_command(
+    command: str,
+    page: str,
+    content_file: Path | None,
+    *,
+    config: dict[str, str],
+) -> int:
+    session = create_session(config)
+    if command == "get":
+        emit_page_get(session, page)
+        return 0
+
+    if command == "save":
+        if content_file is None:
+            raise SystemExit("page save requires a content file")
+        save_page(session, page, content_file)
+        return 0
+
+    raise SystemExit(f"unsupported page command: {command}")
+
+
+def create_session(config: dict[str, str]) -> WikiGoSession:
+    return WikiGoSession(
+        base_url=str(config["base_url"]),
+        username=str(config["username"]),
+        password=str(config["password"]),
+    )
 
 
 def load_runtime_config() -> dict[str, str]:
