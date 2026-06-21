@@ -11,19 +11,49 @@ permissions:
   packages: write
 
 jobs:
-  publish:
-    name: Publish Docker Image
+  changes:
+    name: Compute docs-only change classification
     if: github.repository == 'chof747/wiki-agent'
     runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Compute docs-only change classification
+        id: classify
+        run: |
+          python -m tools.docs_only_changes from-github-event \
+            "${{ github.event_name }}" \
+            "${{ github.event_path }}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+  publish:
+    name: Publish Docker Image
+    if: github.repository == 'chof747/wiki-agent'
+    needs: changes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: No-op for docs-only changes
+        if: needs.changes.outputs.docs_only == 'true'
+        run: |
+          echo "Docs-only change set detected; skipping Docker publish workflow."
+
+      - name: Check out repository
+        if: needs.changes.outputs.docs_only != 'true'
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
+        if: needs.changes.outputs.docs_only != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Derive image metadata
+        if: needs.changes.outputs.docs_only != 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -35,6 +65,7 @@ jobs:
             type=raw,value={{branch}}-sha-{{sha}},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Log in to GHCR
+        if: needs.changes.outputs.docs_only != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -42,6 +73,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image for smoke verification
+        if: needs.changes.outputs.docs_only != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -55,9 +87,11 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke-test wiki-agent --help
+        if: needs.changes.outputs.docs_only != 'true'
         run: docker run --rm wiki-agent-smoke:${{ github.sha }} --help
 
       - name: Push tags to GHCR
+        if: needs.changes.outputs.docs_only != 'true'
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
