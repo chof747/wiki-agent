@@ -11,7 +11,9 @@ Enable **Require status checks to pass before merging** and mark `CI / pytest` a
 That check is emitted by:
 
 - workflow: `CI`
-- job: `pytest`
+- job: `CI / pytest`
+
+On non-manual docs-only pull requests, where every changed path is within `docs/**`, `AGENTS.md`, `CONTEXT.md`, or `config.example.toml`, the workflow still emits a successful visible `CI / pytest` check through a no-op path so branch protection remains unchanged.
 
 ## Recommended companion settings
 

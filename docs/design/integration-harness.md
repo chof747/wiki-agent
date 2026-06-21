@@ -213,6 +213,7 @@ scripts/manual_harness_run_once.sh
 ## CI Coverage
 
 - GitHub Actions runs the same harness-managed command, `uv run wiki-agent-integration test`, for pull requests to `main`, pushes to `main`, and manual dispatch.
+- On non-manual events where every changed path is within the docs-only allowlist (`docs/**`, `AGENTS.md`, `CONTEXT.md`, `config.example.toml`), the workflow still emits a successful visible `CI / integration` check through an intentional no-op path instead of running the harness.
 - `CI / integration` is additional visibility for the harness-backed `tests/integration/` slice and is not initially a required branch-protection check.
 - `CI / pytest` remains the required branch-protection check and the default local verification baseline stays `uv run pytest`.
 

@@ -11,6 +11,8 @@ Wiki Agent publishes a runtime image to GitHub Container Registry at:
 - `<branch-name>`: moving tag published by manual `workflow_dispatch` runs
 - `<branch-name>-sha-<full-commit-sha>`: immutable tag published by manual `workflow_dispatch` runs
 
+On non-manual pushes where every changed path is within the docs-only allowlist (`docs/**`, `AGENTS.md`, `CONTEXT.md`, `config.example.toml`), the `Publish Docker Image` workflow still reports a successful visible check through a no-op path and does not log in to GHCR, build, smoke-test, or push an image.
+
 The first publish may require a one-time manual GHCR package visibility change to public.
 
 ## Runtime contract
