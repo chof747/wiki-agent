@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from wiki_agent import environment
 
 UV_CACHE_DIR = "/private/tmp/uv-cache"
 LOCAL_STATE_NAMES = (".env", ".runtime", ".vscode")
+INTEGRATION_HARNESS_CONTAINER_NAME_PREFIX = "wiki-agent-integration-harness"
 
 
 @dataclass(frozen=True)
@@ -206,6 +208,28 @@ def best_effort_harness_down(worktree_path: Path) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or "unknown error"
         print(f"warning: harness shutdown failed: {detail}", file=sys.stderr)
+
+    best_effort_remove_harness_container(worktree_path)
+
+
+def best_effort_remove_harness_container(worktree_path: Path) -> None:
+    result = subprocess.run(
+        ["docker", "rm", "-f", integration_harness_container_name(worktree_path)],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if not detail or "No such container" in detail:
+            return
+        print(f"warning: harness container removal failed: {detail}", file=sys.stderr)
+
+
+def integration_harness_container_name(worktree_path: Path) -> str:
+    repo_hash = hashlib.sha1(str(worktree_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"{INTEGRATION_HARNESS_CONTAINER_NAME_PREFIX}-{repo_hash}"
 
 
 def uv_env() -> dict[str, str]:
