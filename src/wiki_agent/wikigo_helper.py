@@ -2,25 +2,78 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
-from http.cookiejar import CookieJar
 from pathlib import Path
-from typing import Any
 
-from wiki_agent.wikigo_adapter import WikiGoAdapterError, extract_markdown as _extract_markdown
-from wiki_agent.wikigo_adapter import normalize_comments_payload
+from wiki_agent import wikigo_comment_operations as _comment_operations
+from wiki_agent import wikigo_discovery_operations as _discovery_operations
+from wiki_agent import wikigo_page_operations as _page_operations
+from wiki_agent import wikigo_runtime as _runtime
 
 
 SUPPORTED_WIKIGO_VERSION = "1.8.9"
 
+WikiGoSession = _runtime.WikiGoSession
+load_runtime_config = _runtime.load_runtime_config
+quote_page = _runtime.quote_page
+
+normalize_comments = _comment_operations.normalize_comments
+read_comments_payload = _comment_operations.read_comments_payload
+delete_comment = _comment_operations.delete_comment
+create_comment = _comment_operations.create_comment
+
+extract_markdown = _page_operations.extract_markdown
+emit_page_get = _page_operations.emit_page_get
+save_page = _page_operations.save_page
+read_page_source = _page_operations.read_page_source
+
+discover_pages = _discovery_operations.discover_pages
+
 
 def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    config = load_runtime_config()
+
+    if args.command == "config":
+        print(f"base_url={config['base_url']}")
+        print(f"username={config['username']}")
+        print(f"config_file={config['config_file']}")
+        return 0
+
+    if args.command == "api":
+        session = create_session(config)
+        response = _run_api_command(session, args)
+        sys.stdout.buffer.write(response)
+        return 0
+
+    if args.command == "comments":
+        return _run_comments_command(args, config=config)
+
+    if args.command == "page":
+        return run_page_command(
+            args.page_command,
+            args.page,
+            getattr(args, "content_file", None),
+            config=config,
+        )
+
+    if args.command == "comments-scan":
+        session = create_session(config)
+        payload = _discovery_operations.scan_comments(session, username=str(config["username"]))
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "create-document":
+        session = create_session(config)
+        _page_operations.create_document(session, args.title, args.path, args.content_file)
+        return 0
+
+    parser.error("unsupported command")
+    return 2
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wikigo-helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -64,114 +117,48 @@ def main(argv: list[str] | None = None) -> int:
     create_document_parser.add_argument("path")
     create_document_parser.add_argument("content_file", type=Path)
 
-    args = parser.parse_args(argv)
-    config = load_runtime_config()
+    return parser
 
-    if args.command == "config":
-        print(f"base_url={config['base_url']}")
-        print(f"username={config['username']}")
-        print(f"config_file={config['config_file']}")
-        return 0
 
-    if args.command == "api":
-        session = create_session(config)
-        body = None
-        if args.body_file is not None:
-            body = Path(args.body_file).read_bytes()
-        response = session.request(
-            args.method.upper(),
-            args.endpoint,
-            body=body,
-            content_type=args.content_type,
-        )
-        sys.stdout.buffer.write(response)
-        return 0
+def _run_api_command(session: WikiGoSession, args: argparse.Namespace) -> bytes:
+    body = None
+    if args.body_file is not None:
+        body = Path(args.body_file).read_bytes()
+    return session.request(
+        args.method.upper(),
+        args.endpoint,
+        body=body,
+        content_type=args.content_type,
+    )
 
-    if args.command == "comments":
-        session = create_session(config)
-        if args.comments_command == "list":
-            payload = read_comments_payload(session, args.page)
-            comments = normalize_comments_payload(payload)
-            if args.mention_only:
-                mention = f"@{config['username']}"
-                comments = [
-                    item
-                    for item in comments
-                    if item["text"].lower().startswith(mention.lower())
-                ]
-            print(json.dumps(comments, ensure_ascii=False, indent=2))
-            return 0
 
-        if args.comments_command == "delete":
-            delete_comment(session, args.comment_id, args.page)
-            print(f"deleted comment: {args.comment_id}")
-            return 0
-
-        if args.comments_command == "create":
-            comment = create_comment(
-                session,
-                args.page,
-                args.content_file.read_text(encoding="utf-8"),
-            )
-            print(json.dumps(comment, ensure_ascii=False))
-            return 0
-
-    if args.command == "page":
-        return run_page_command(
-            args.page_command,
+def _run_comments_command(args: argparse.Namespace, *, config: dict[str, str]) -> int:
+    session = create_session(config)
+    if args.comments_command == "list":
+        comments = _comment_operations.list_comments(
+            session,
             args.page,
-            getattr(args, "content_file", None),
-            config=config,
+            mention_only=args.mention_only,
+            mention_username=str(config["username"]),
         )
-
-    if args.command == "comments-scan":
-        session = create_session(config)
-        pages = discover_pages(session)
-        matches: list[dict[str, Any]] = []
-        for page in pages:
-            comments = normalize_comments_payload(session.get_json(f"/api/comments/{quote_page(page)}"))
-            for comment in comments:
-                if comment["text"].lower().startswith(f"@{str(config['username']).lower()}"):
-                    matches.append(
-                        {
-                            "page": page,
-                            "id": comment["id"],
-                            "text": comment["text"],
-                            "author": comment["author"],
-                            "created_at": comment["created_at"],
-                        }
-                    )
-        print(
-            json.dumps(
-                {
-                    "target_user": config["username"],
-                    "scanned_pages": len(pages),
-                    "matched_comments": len(matches),
-                    "matches": matches,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps(comments, ensure_ascii=False, indent=2))
         return 0
 
-    if args.command == "create-document":
-        session = create_session(config)
-        session.post_json(
-            "/api/document/create",
-            {"title": args.title, "path": args.path},
-        )
-        session.request(
-            "POST",
-            f"/api/save/{quote_page(args.path)}",
-            body=args.content_file.read_bytes(),
-            content_type="text/markdown",
-        )
-        print(f"created and saved document at path: {args.path}")
+    if args.comments_command == "delete":
+        delete_comment(session, args.comment_id, args.page)
+        print(f"deleted comment: {args.comment_id}")
         return 0
 
-    parser.error("unsupported command")
-    return 2
+    if args.comments_command == "create":
+        comment = create_comment(
+            session,
+            args.page,
+            args.content_file.read_text(encoding="utf-8"),
+        )
+        print(json.dumps(comment, ensure_ascii=False))
+        return 0
+
+    raise SystemExit(f"unsupported comments command: {args.comments_command}")
 
 
 def run_page_command(
@@ -201,174 +188,3 @@ def create_session(config: dict[str, str]) -> WikiGoSession:
         username=str(config["username"]),
         password=str(config["password"]),
     )
-
-
-def load_runtime_config() -> dict[str, str]:
-    config_value = os.environ.get("WIKIGO_RUNTIME_CONFIG")
-    if config_value:
-        config_path = Path(config_value)
-        if not config_path.exists():
-            raise SystemExit(f"WIKIGO_RUNTIME_CONFIG does not exist: {config_path}")
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    else:
-        payload, config_path = _load_runtime_config_from_app_config()
-
-    for key in ("base_url", "username", "password"):
-        value = payload.get(key)
-        if not isinstance(value, str) or not value:
-            raise SystemExit(f"runtime config field '{key}' must be a non-empty string")
-    payload["config_file"] = str(config_path)
-    return payload
-
-
-def _load_runtime_config_from_app_config() -> tuple[dict[str, Any], Path]:
-    config_value = os.environ.get("WIKI_AGENT_CONFIG_PATH")
-    if not config_value:
-        raise SystemExit("WIKIGO_RUNTIME_CONFIG is not set")
-
-    config_path = Path(config_value)
-    if not config_path.exists():
-        raise SystemExit(f"WIKI_AGENT_CONFIG_PATH does not exist: {config_path}")
-
-    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    wikigo = raw.get("wikigo")
-    if not isinstance(wikigo, dict):
-        raise SystemExit("config file is missing [wikigo] settings")
-
-    payload = {key: wikigo.get(key) for key in ("base_url", "username", "password")}
-    return payload, config_path
-
-
-class WikiGoSession:
-    def __init__(self, *, base_url: str, username: str, password: str) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._username = username
-        self._password = password
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
-        self._login()
-
-    def _login(self) -> None:
-        payload = json.dumps(
-            {
-                "username": self._username,
-                "password": self._password,
-                "keeploggedin": False,
-            }
-        ).encode("utf-8")
-        self.request("POST", "/api/login", body=payload, content_type="application/json")
-
-    def request(
-        self,
-        method: str,
-        endpoint: str,
-        *,
-        body: bytes | None = None,
-        content_type: str | None = None,
-    ) -> bytes:
-        request = urllib.request.Request(
-            urllib.parse.urljoin(f"{self._base_url}/", endpoint.lstrip("/")),
-            method=method,
-            data=body,
-        )
-        if content_type:
-            request.add_header("Content-Type", content_type)
-        try:
-            with self._opener.open(request) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            raise SystemExit(
-                f"{method} {endpoint} failed with HTTP {exc.code}: {error_body}"
-            ) from exc
-
-    def get_json(self, endpoint: str) -> dict[str, Any]:
-        payload = json.loads(self.request("GET", endpoint).decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise SystemExit(f"{endpoint} did not return a JSON object")
-        return payload
-
-    def post_json(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self.request(
-            "POST",
-            endpoint,
-            body=json.dumps(payload).encode("utf-8"),
-            content_type="application/json",
-        )
-        if not response.strip():
-            return {}
-        parsed = json.loads(response.decode("utf-8"))
-        if not isinstance(parsed, dict):
-            return {}
-        return parsed
-
-
-def normalize_comments(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    return normalize_comments_payload(payload)
-
-
-def extract_markdown(payload: bytes) -> str:
-    try:
-        return _extract_markdown(payload)
-    except WikiGoAdapterError as exc:
-        raise SystemExit("GET page response is missing markdown content") from exc
-
-
-def emit_page_get(session: WikiGoSession, page: str) -> None:
-    payload = read_page_source(session, page)
-    print(json.dumps({"markdown": extract_markdown(payload)}, ensure_ascii=False))
-
-
-def save_page(session: WikiGoSession, page: str, content_file: Path) -> None:
-    session.request(
-        "POST",
-        f"/api/save/{quote_page(page)}",
-        body=content_file.read_bytes(),
-        content_type="text/markdown",
-    )
-    print(f"saved page: {page}")
-
-
-def read_comments_payload(session: WikiGoSession, page: str) -> dict[str, Any]:
-    endpoint = f"/api/comments/{quote_page(page)}"
-    payload = json.loads(session.request("GET", endpoint).decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise SystemExit(f"GET {endpoint} did not return a JSON object")
-    return payload
-
-
-def read_page_source(session: WikiGoSession, page: str) -> bytes:
-    endpoint = f"/api/source/{quote_page(page)}"
-    return session.request("GET", endpoint)
-
-
-def delete_comment(session: WikiGoSession, comment_id: str, page: str) -> None:
-    endpoint = f"/api/comments/delete/{quote_page(page)}/{urllib.parse.quote(comment_id)}"
-    session.request("DELETE", endpoint)
-
-
-def create_comment(session: WikiGoSession, page: str, content: str) -> dict[str, Any]:
-    endpoint = f"/api/comments/add/{quote_page(page)}"
-    return session.post_json(endpoint, {"content": content})
-
-
-def discover_pages(session: WikiGoSession) -> list[str]:
-    sitemap_xml = session.request("GET", "/sitemap.xml").decode("utf-8")
-    root = ET.fromstring(sitemap_xml)
-    namespace = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-
-    pages: list[str] = []
-    seen: set[str] = set()
-    for node in root.findall(".//sm:url/sm:loc", namespace):
-        value = (node.text or "").strip()
-        if not value:
-            continue
-        path = urllib.parse.urlparse(value).path.strip("/")
-        if not path or path in seen:
-            continue
-        seen.add(path)
-        pages.append(path)
-    return pages
-
-
-def quote_page(page: str) -> str:
-    return urllib.parse.quote(page, safe="/")

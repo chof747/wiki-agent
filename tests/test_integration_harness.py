@@ -408,10 +408,27 @@ def test_start_container_runs_wikigo_as_host_user(monkeypatch) -> None:
         "run",
         "-d",
         "--name",
-        integration_harness.CONTAINER_NAME,
+        integration_harness.container_name(),
         "--user",
         "1001:1002",
     ]
+
+
+def test_container_name_is_scoped_to_repo_root(monkeypatch, tmp_path: Path) -> None:
+    first_root = tmp_path / "wiki-agent-47"
+    second_root = tmp_path / "wiki-agent-48"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", first_root)
+    first_name = integration_harness.container_name()
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", second_root)
+    second_name = integration_harness.container_name()
+
+    assert first_name.startswith(f"{integration_harness.CONTAINER_NAME_PREFIX}-")
+    assert second_name.startswith(f"{integration_harness.CONTAINER_NAME_PREFIX}-")
+    assert first_name != second_name
 
 
 def test_ensure_runtime_database_creates_missing_database(monkeypatch) -> None:
