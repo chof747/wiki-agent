@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import socket
@@ -36,7 +37,7 @@ BOT_USERNAME = "marvin"
 BOT_PASSWORD = "marvin-pass"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin"
-CONTAINER_NAME = "wiki-agent-integration-harness"
+CONTAINER_NAME_PREFIX = "wiki-agent-integration-harness"
 DEFAULT_ADMIN_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/postgres"
 DEFAULT_RUNTIME_POSTGRES_DSN = "postgresql://integration:integration@localhost:5432/wiki_agent_integration"
 ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
@@ -98,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
 def up() -> None:
     state = load_or_create_state()
     if container_exists() and container_host_port() is None:
-        run_docker(["rm", "-f", CONTAINER_NAME])
+        run_docker(["rm", "-f", container_name()])
     if container_exists():
         state = sync_state_with_container(state)
     ensure_runtime_files(state)
@@ -179,7 +180,7 @@ def run_test() -> None:
 
 def down() -> None:
     if container_exists():
-        run_docker(["rm", "-f", CONTAINER_NAME])
+        run_docker(["rm", "-f", container_name()])
         print("Wiki-Go harness container removed.")
     else:
         print("Wiki-Go harness container is not present.")
@@ -259,7 +260,7 @@ def sync_state_with_container(state: dict[str, Any]) -> dict[str, Any]:
     port = container_host_port()
     if port is None:
         raise SystemExit(
-            f"{CONTAINER_NAME} exists but does not publish 8080/tcp; remove it and rerun the harness"
+            f"{container_name()} exists but does not publish 8080/tcp; remove it and rerun the harness"
         )
     if port == state["port"]:
         return state
@@ -271,7 +272,7 @@ def sync_state_with_container(state: dict[str, Any]) -> dict[str, Any]:
 
 def container_host_port() -> int | None:
     result = subprocess.run(
-        ["docker", "port", CONTAINER_NAME, "8080/tcp"],
+        ["docker", "port", container_name(), "8080/tcp"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -369,7 +370,7 @@ def ensure_runtime_database() -> None:
 def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
     start_container(state)
     wait_for_http(state["base_url"])
-    run_docker(["stop", CONTAINER_NAME])
+    run_docker(["stop", container_name()])
 
     config_path = DATA_ROOT / "config.yaml"
     text = config_path.read_text(encoding="utf-8")
@@ -380,7 +381,7 @@ def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
 def start_container(state: dict[str, Any]) -> None:
     if container_exists():
         if not container_running():
-            run_docker(["start", CONTAINER_NAME])
+            run_docker(["start", container_name()])
         return
     user = f"{os.getuid()}:{os.getgid()}"
     run_docker(
@@ -388,7 +389,7 @@ def start_container(state: dict[str, Any]) -> None:
             "run",
             "-d",
             "--name",
-            CONTAINER_NAME,
+            container_name(),
             "--user",
             user,
             "-p",
@@ -532,9 +533,14 @@ def run_docker(args: list[str]) -> str:
     return result.stdout.strip()
 
 
+def container_name() -> str:
+    repo_hash = hashlib.sha1(str(REPO_ROOT.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"{CONTAINER_NAME_PREFIX}-{repo_hash}"
+
+
 def container_exists() -> bool:
     result = subprocess.run(
-        ["docker", "container", "inspect", CONTAINER_NAME],
+        ["docker", "container", "inspect", container_name()],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -545,7 +551,7 @@ def container_exists() -> bool:
 
 def container_running() -> bool:
     result = subprocess.run(
-        ["docker", "container", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME],
+        ["docker", "container", "inspect", "-f", "{{.State.Running}}", container_name()],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -584,13 +590,13 @@ def readiness_timeout_message(base_url: str, last_error: str | None) -> str:
         if logs:
             parts.append(f"Wiki-Go container logs:\n{logs}")
     else:
-        parts.append(f"Wiki-Go container {CONTAINER_NAME} was not found")
+        parts.append(f"Wiki-Go container {container_name()} was not found")
     return "\n\n".join(parts)
 
 
 def container_state_summary() -> str:
     result = subprocess.run(
-        ["docker", "container", "inspect", CONTAINER_NAME],
+        ["docker", "container", "inspect", container_name()],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -598,7 +604,7 @@ def container_state_summary() -> str:
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
-        return detail or f"unable to inspect {CONTAINER_NAME}"
+        return detail or f"unable to inspect {container_name()}"
 
     payload = json.loads(result.stdout)
     state = payload[0].get("State", {})
@@ -615,7 +621,7 @@ def container_state_summary() -> str:
 
 def container_logs() -> str:
     result = subprocess.run(
-        ["docker", "logs", "--tail", "200", CONTAINER_NAME],
+        ["docker", "logs", "--tail", "200", container_name()],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
