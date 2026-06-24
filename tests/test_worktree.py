@@ -137,6 +137,7 @@ def test_delete_requires_pr_and_removes_registered_worktree(
     monkeypatch.setattr(worktree, "resolve_repo_root", lambda: repo_root)
 
     observed: list[tuple[list[str], Path]] = []
+    expected_container_name = worktree.integration_harness_container_name(worktree_path)
 
     def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
         argv = list(args[0])
@@ -172,6 +173,8 @@ def test_delete_requires_pr_and_removes_registered_worktree(
             )
         if argv == ["uv", "run", "wiki-agent-integration", "down"]:
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv == ["docker", "rm", "-f", expected_container_name]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
         if argv == ["git", "worktree", "remove", str(worktree_path)]:
             shutil.rmtree(worktree_path)
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
@@ -185,7 +188,65 @@ def test_delete_requires_pr_and_removes_registered_worktree(
     assert result.branch == "feat/71-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement"
     assert result.path == worktree_path
     assert not worktree_path.exists()
-    assert observed[-2:] == [
+    assert observed[-3:] == [
         (["uv", "run", "wiki-agent-integration", "down"], worktree_path),
+        (["docker", "rm", "-f", expected_container_name], worktree_path),
         (["git", "worktree", "remove", str(worktree_path)], repo_root),
     ]
+
+
+def test_delete_ignores_missing_scoped_harness_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo_root = tmp_path / "wiki-agent"
+    repo_root.mkdir()
+    worktree_path = repo_root.parent / "wiki-agent-worktrees" / "wiki-agent-71"
+    worktree_path.mkdir(parents=True)
+    expected_container_name = worktree.integration_harness_container_name(worktree_path)
+
+    monkeypatch.setattr(worktree, "resolve_repo_root", lambda: repo_root)
+
+    def fake_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+        argv = list(args[0])
+
+        if argv == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=(
+                    f"worktree {repo_root}\n"
+                    "HEAD abc123\n"
+                    "branch refs/heads/main\n\n"
+                    f"worktree {worktree_path}\n"
+                    "HEAD def456\n"
+                    "branch refs/heads/feat/71-add-issue-scoped-worktree-workflow-tooling-and-local-enforcement\n"
+                ),
+                stderr="",
+            )
+        if argv == ["git", "status", "--short"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv[:4] == ["gh", "pr", "list", "--head"]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=json.dumps(
+                    [{"number": 91, "url": "https://github.com/chof747/wiki-agent/pull/91"}]
+                ),
+                stderr="",
+            )
+        if argv == ["uv", "run", "wiki-agent-integration", "down"]:
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="harness unavailable")
+        if argv == ["docker", "rm", "-f", expected_container_name]:
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Error: No such container")
+        if argv == ["git", "worktree", "remove", str(worktree_path)]:
+            shutil.rmtree(worktree_path)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        raise AssertionError(f"unexpected command: {argv}")
+
+    monkeypatch.setattr(worktree.subprocess, "run", fake_run)
+
+    result = worktree.delete_worktree(71)
+
+    assert result.path == worktree_path
+    assert not worktree_path.exists()
