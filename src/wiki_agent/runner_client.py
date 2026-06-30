@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from wiki_agent.domain import ALLOWED_INVOCATION_STATUSES
+from wiki_agent.prompt_envelope import PromptEnvelope
 
 if TYPE_CHECKING:
     from wiki_agent.comment_jobs import CommentJob
@@ -19,22 +20,6 @@ class RunnerConfigError(ValueError):
 @dataclass(frozen=True)
 class RunnerCommand:
     argv: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class PromptEnvelope:
-    prompt: str
-    original_comment_text: str
-    target_page: str
-    comment_identity: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "prompt": self.prompt,
-            "original_comment_text": self.original_comment_text,
-            "target_page": self.target_page,
-            "comment_identity": self.comment_identity,
-        }
 
 
 @dataclass(frozen=True)
@@ -60,19 +45,14 @@ class RunnerClient:
         self._timeout = timeout
 
     def build_prompt_envelope(self, job: CommentJob) -> PromptEnvelope:
-        return PromptEnvelope(
-            prompt=job.prompt,
-            original_comment_text=job.original_comment_text,
-            target_page=job.target_page,
-            comment_identity=job.comment_identity,
-        )
+        return PromptEnvelope.from_comment_job(job)
 
     def invoke(self, job: CommentJob) -> RunnerResponse:
         envelope = self.build_prompt_envelope(job)
         try:
             result = subprocess.run(
                 list(self._command.argv),
-                input=json.dumps(envelope.as_dict(), sort_keys=True),
+                input=envelope.to_json(),
                 capture_output=True,
                 text=True,
                 check=False,

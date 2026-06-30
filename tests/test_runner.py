@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent import runner
 
 
@@ -210,6 +211,44 @@ def test_runner_rejects_unexpected_prompt_envelope_fields(tmp_path: Path) -> Non
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] is None
+
+
+def test_prompt_envelope_round_trips_between_client_and_runner_contract() -> None:
+    envelope = PromptEnvelope(
+        prompt="tighten intro",
+        original_comment_text="@marvin tighten intro",
+        target_page="/pages/example",
+        comment_identity="comment-1",
+    )
+
+    assert PromptEnvelope.from_stdin(io.StringIO(envelope.to_json())) == envelope
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("{not json}", "stdin must contain one JSON prompt envelope"),
+        (json.dumps([]), "prompt envelope must be a JSON object"),
+        (
+            json.dumps({"prompt": "x", "original_comment_text": "y", "target_page": "/p"}),
+            "prompt envelope field 'comment_identity' must be a non-empty string",
+        ),
+        (
+            json.dumps(
+                {
+                    "prompt": "x",
+                    "original_comment_text": "y",
+                    "target_page": "/p",
+                    "comment_identity": 1,
+                }
+            ),
+            "prompt envelope field 'comment_identity' must be a non-empty string",
+        ),
+    ],
+)
+def test_prompt_envelope_shared_validation_messages(payload: str, message: str) -> None:
+    with pytest.raises(PromptEnvelopeError, match=message):
+        PromptEnvelope.from_stdin(io.StringIO(payload))
 
 
 def test_runner_returns_structured_failure_for_invalid_max_input_bytes_env(tmp_path: Path) -> None:
