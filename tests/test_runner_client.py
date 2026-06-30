@@ -7,6 +7,7 @@ from textwrap import dedent
 
 import pytest
 
+from wiki_agent.prompt_envelope import PromptEnvelope
 from wiki_agent.comment_jobs import CommentJob
 from wiki_agent.runner_client import RunnerClient, RunnerCommand, RunnerInvocationError
 
@@ -35,12 +36,13 @@ def test_runner_client_sends_prompt_envelope_and_parses_stdout(tmp_path: Path) -
     assert response.stderr == "diagnostic line\n"
 
     payload = json.loads(capture_path.read_text())
-    assert payload == {
-        "comment_identity": "comment-1",
-        "original_comment_text": "@marvin tighten intro",
-        "prompt": "tighten intro",
-        "target_page": "/pages/example",
-    }
+    assert payload == PromptEnvelope.from_comment_job(_job()).as_dict()
+
+
+def test_runner_client_build_prompt_envelope_uses_shared_contract() -> None:
+    client = RunnerClient(RunnerCommand(argv=("wiki-agent-runner",)))
+
+    assert client.build_prompt_envelope(_job()) == PromptEnvelope.from_comment_job(_job())
 
 
 def test_runner_client_maps_non_zero_exit_to_failure(tmp_path: Path) -> None:
