@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
 from wiki_agent.domain import STATUS_UPDATE_FAILED
+from wiki_agent.failure_feedback import TerminalFailureFeedback
 from wiki_agent.runner_client import RunnerClient, RunnerInvocationError
 
 if TYPE_CHECKING:
@@ -36,10 +37,12 @@ class Worker:
         *,
         repository: CommentJobRepository | None = None,
         runner_client: RunnerClient | None = None,
+        failure_feedback: TerminalFailureFeedback | None = None,
     ) -> None:
         self._config = config
         self._repository = repository or CommentJobRepository(config.postgres.dsn)
         self._runner_client = runner_client or RunnerClient(config.runner)
+        self._failure_feedback = failure_feedback or TerminalFailureFeedback(config)
 
     def run_once(self) -> WorkerRunResult:
         job = self._repository.claim_next_queued()
@@ -105,6 +108,7 @@ class Worker:
             status,
             error_detail=error_detail,
         )
+        self._failure_feedback.ensure_for_job(finalized_job)
         return WorkerRunResult(
             invocation=InvocationOutcome(
                 job=finalized_job,

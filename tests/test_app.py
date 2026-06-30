@@ -152,6 +152,30 @@ def test_run_logs_and_continues_after_scan_failure(caplog) -> None:
     ]
 
 
+def test_run_routes_stale_processing_failures_through_failure_feedback(caplog) -> None:
+    config = load_config(_fixture_config_path())
+    stale_job = _invocation("comment-1", "UPDATE_FAILED").job
+    repository = FakeServiceRepository(lock=FakeLockHandle(), stale_jobs=[stale_job])
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([])
+    shutdown = FakeShutdownEvent([True])
+    failure_feedback = FakeFailureFeedback()
+    app = WikiAgentApp(
+        config,
+        scanner=scanner,
+        worker=worker,
+        repository=repository,
+        shutdown_event=shutdown,
+        failure_feedback=failure_feedback,
+    )
+
+    with caplog.at_level(logging.INFO):
+        return_code = app.run()
+
+    assert return_code == 0
+    assert failure_feedback.jobs == [stale_job]
+
+
 def _fixture_config_path() -> Path:
     return Path(__file__).parent / "fixtures" / "config.toml"
 
@@ -195,12 +219,19 @@ def _events(records: list[logging.LogRecord]) -> list[str]:
 
 
 class FakeServiceRepository:
-    def __init__(self, *, lock: FakeLockHandle | None, enqueue_actions: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        lock: FakeLockHandle | None,
+        enqueue_actions: list[str] | None = None,
+        stale_jobs: list[CommentJob] | None = None,
+    ) -> None:
         self.lock = lock
         self.schema_ensured = False
         self.marked_stale: list[timedelta] = []
         self.enqueued: list[str] = []
         self._enqueue_actions = list(enqueue_actions or [])
+        self._stale_jobs = list(stale_jobs or [])
 
     def try_acquire_singleton_lock(self) -> FakeLockHandle | None:
         return self.lock
@@ -210,7 +241,7 @@ class FakeServiceRepository:
 
     def mark_stale_processing_jobs(self, *, now=None, processing_timeout: timedelta):  # type: ignore[no-untyped-def]
         self.marked_stale.append(processing_timeout)
-        return 0
+        return list(self._stale_jobs)
 
     def enqueue_event(self, event: CommentEvent, *, scanned_at=None):  # type: ignore[no-untyped-def]
         self.enqueued.append(event.comment_identity)
@@ -264,6 +295,14 @@ class FakeScanner:
         if self._error is not None:
             raise self._error
         return list(self._events)
+
+
+class FakeFailureFeedback:
+    def __init__(self) -> None:
+        self.jobs: list[CommentJob] = []
+
+    def ensure_for_job(self, job: CommentJob) -> None:
+        self.jobs.append(job)
 
 
 class FakeShutdownEvent:
