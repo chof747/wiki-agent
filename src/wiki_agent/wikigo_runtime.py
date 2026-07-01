@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
+
+from wiki_agent.config import ConfigError, load_wikigo_config
 
 
 def load_runtime_config() -> dict[str, str]:
@@ -35,15 +36,16 @@ def _load_runtime_config_from_app_config() -> tuple[dict[str, Any], Path]:
         raise SystemExit("WIKIGO_RUNTIME_CONFIG is not set")
 
     config_path = Path(config_value)
-    if not config_path.exists():
-        raise SystemExit(f"WIKI_AGENT_CONFIG_PATH does not exist: {config_path}")
+    try:
+        wikigo = load_wikigo_config(config_path)
+    except ConfigError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    wikigo = raw.get("wikigo")
-    if not isinstance(wikigo, dict):
-        raise SystemExit("config file is missing [wikigo] settings")
-
-    payload = {key: wikigo.get(key) for key in ("base_url", "username", "password")}
+    payload = {
+        "base_url": wikigo.base_url,
+        "username": wikigo.username,
+        "password": wikigo.password,
+    }
     return payload, config_path
 
 

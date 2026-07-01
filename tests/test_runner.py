@@ -86,6 +86,45 @@ def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
     assert openai_calls[0]["timeout"] == 12.5
 
 
+def test_runner_ignores_invalid_unrelated_wikigo_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            "bot_name = \"marvin\"\n\n"
+            "[postgres]\n"
+            'dsn = "not-a-postgres-dsn"\n\n'
+            "[wikigo]\n"
+            'base_url = "http://127.0.0.1:4010"\n'
+            'username = ""\n'
+            'password = "marvin-pass"\n\n'
+            "[runner]\n"
+            'command = ["wiki-agent-runner"]\n\n'
+            "[runner.openai]\n"
+            'api_key = "config-openai-key"\n'
+            'model = "gpt-4.1-mini"\n'
+            "max_input_bytes = 12345\n"
+            "max_output_bytes = 23456\n"
+            "timeout_seconds = 12.5\n\n"
+            "[service]\n"
+            'log_level = "INFO"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    result, _state_path, _helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+        extra_env={"WIKI_AGENT_CONFIG_PATH": str(config_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    openai_calls = _read_jsonl(openai_log_path)
+    assert len(openai_calls) == 1
+    assert openai_calls[0]["model"] == "gpt-4.1-mini"
+    assert openai_calls[0]["timeout"] == 12.5
+
+
 def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         (

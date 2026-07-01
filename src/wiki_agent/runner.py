@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from wiki_agent import environment
-from wiki_agent.config import load_config
+from wiki_agent.config import load_runner_openai_config
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.runner_completion import RunnerCompletion
 from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
@@ -73,8 +73,7 @@ class RunnerSettings:
 
     @classmethod
     def from_env(cls) -> "RunnerSettings":
-        config = _load_app_config_from_env()
-        config_openai = config.runner_openai if config is not None else None
+        config_openai = _load_runner_openai_config_from_env()
         return cls(
             api_key=_read_non_empty_string_env(
                 "OPENAI_API_KEY",
@@ -453,11 +452,11 @@ def _read_non_empty_string_env(name: str, default: str | None) -> str:
     return value
 
 
-def _load_app_config_from_env():
+def _load_runner_openai_config_from_env():
     config_path_value = os.getenv("WIKI_AGENT_CONFIG_PATH")
     if not config_path_value:
         return None
-    return load_config(Path(config_path_value))
+    return load_runner_openai_config(Path(config_path_value))
 
 
 def _bounded_message(exc: Exception) -> str:
