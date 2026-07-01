@@ -50,40 +50,37 @@ def _completion(io: FakeCompletionIO) -> runner_completion.RunnerCompletion:
     )
 
 
-def test_complete_update_confirms_update_before_delete_and_returns_success() -> None:
+def test_complete_update_primary_action_confirms_update_before_finalization() -> None:
     io = FakeCompletionIO(confirmed_markdown="# Current\n")
 
-    result = _completion(io).complete_update(
+    result = _completion(io).complete_update_primary_action(
         target_page="/pages/example",
-        comment_identity="comment-1",
         final_page_content="# Updated\n",
     )
 
-    assert result == runner_completion.CompletionResult(status="SUCCESS")
-    assert io.calls == ["page.save", "page.get", "comments.delete", "comments.list"]
+    assert result == runner_completion.ConfirmedPrimaryAction(success_status="SUCCESS")
+    assert io.calls == ["page.save", "page.get"]
     assert io.saved_markdown == "# Updated\n"
 
 
-def test_complete_rejection_confirms_replacement_before_delete_and_returns_rejected() -> None:
+def test_complete_rejection_primary_action_confirms_replacement_before_finalization() -> None:
     io = FakeCompletionIO()
     replacement_comment = "replacement comment\n"
 
-    result = _completion(io).complete_rejection(
+    result = _completion(io).complete_rejection_primary_action(
         target_page="/pages/example",
-        comment_identity="comment-1",
         replacement_comment=replacement_comment,
     )
 
-    assert result == runner_completion.CompletionResult(status="REJECTED_WITH_COMMENT")
-    assert io.calls == ["comments.create", "comments.list", "comments.delete", "comments.list"]
+    assert result == runner_completion.ConfirmedPrimaryAction(success_status="REJECTED_WITH_COMMENT")
+    assert io.calls == ["comments.create", "comments.list"]
 
 
-def test_complete_rejection_returns_update_failed_when_replacement_confirmation_fails() -> None:
+def test_complete_rejection_primary_action_returns_update_failed_when_replacement_confirmation_fails() -> None:
     io = FakeCompletionIO(suppress_created_comment=True)
 
-    result = _completion(io).complete_rejection(
+    result = _completion(io).complete_rejection_primary_action(
         target_page="/pages/example",
-        comment_identity="comment-1",
         replacement_comment="replacement comment\n",
     )
 
@@ -95,13 +92,26 @@ def test_complete_rejection_returns_update_failed_when_replacement_confirmation_
     assert io.calls == ["comments.create", "comments.list"]
 
 
-def test_complete_update_returns_delete_failed_after_confirmed_visible_work() -> None:
-    io = FakeCompletionIO(confirmed_markdown="# Current\n", keep_comment_after_delete=True)
+def test_complete_finalization_returns_success_after_confirmed_update() -> None:
+    io = FakeCompletionIO()
 
-    result = _completion(io).complete_update(
+    result = _completion(io).complete_finalization(
         target_page="/pages/example",
         comment_identity="comment-1",
-        final_page_content="# Updated\n",
+        primary_action=runner_completion.ConfirmedPrimaryAction(success_status="SUCCESS"),
+    )
+
+    assert result == runner_completion.CompletionResult(status="SUCCESS")
+    assert io.calls == ["comments.delete", "comments.list"]
+
+
+def test_complete_finalization_returns_delete_failed_after_confirmed_visible_work() -> None:
+    io = FakeCompletionIO(keep_comment_after_delete=True)
+
+    result = _completion(io).complete_finalization(
+        target_page="/pages/example",
+        comment_identity="comment-1",
+        primary_action=runner_completion.ConfirmedPrimaryAction(success_status="SUCCESS"),
     )
 
     assert result == runner_completion.CompletionResult(
@@ -109,4 +119,4 @@ def test_complete_update_returns_delete_failed_after_confirmed_visible_work() ->
         error_code="DELETE_CONFIRMATION_FAILED",
         message="source comment still present after delete confirmation",
     )
-    assert io.calls == ["page.save", "page.get", "comments.delete", "comments.list"]
+    assert io.calls == ["comments.delete", "comments.list"]

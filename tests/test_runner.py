@@ -146,7 +146,7 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
     def fake_generate_runner_decision(_prompt: str, settings: runner.RunnerSettings) -> runner.RunnerDecision:
         settings_seen["settings"] = settings
-        return runner.RunnerDecision(action="update", final_page_content="# Replacement page\n")
+        return runner.UpdateDecision(final_page_content="# Replacement page\n")
 
     monkeypatch.setattr(runner, "_read_page", lambda _target_page: "# Current page\n")
     monkeypatch.setattr(runner, "_load_prompt_template", lambda: "{{PROMPT}}")
@@ -624,11 +624,23 @@ def test_validate_model_payload_accepts_all_rejection_reason_codes(rejection_rea
         }
     )
 
-    assert decision == runner.RunnerDecision(
-        action="reject",
+    assert decision == runner.RejectDecision(
         rejection_reason_code=rejection_reason_code,
         explanation="Human-readable explanation.",
     )
+
+
+def test_validate_model_payload_returns_update_decision_variant() -> None:
+    decision = runner._validate_model_payload(
+        {
+            "action": "update",
+            "final_page_content": "# Updated\n",
+            "rejection_reason_code": None,
+            "explanation": None,
+        }
+    )
+
+    assert decision == runner.UpdateDecision(final_page_content="# Updated\n")
 
 
 def test_render_prompt_includes_all_runtime_inputs() -> None:

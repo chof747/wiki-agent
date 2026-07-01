@@ -14,7 +14,7 @@ from typing import Any
 from wiki_agent import environment
 from wiki_agent.config import load_runner_openai_config
 from wiki_agent.domain import STATUS_UPDATE_FAILED
-from wiki_agent.runner_completion import RunnerCompletion
+from wiki_agent.runner_completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
 from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output, parse_helper_page_output
 
@@ -56,11 +56,17 @@ class ModelOutputError(ValueError):
 
 
 @dataclass(frozen=True)
-class RunnerDecision:
-    action: str
-    final_page_content: str | None = None
-    rejection_reason_code: str | None = None
-    explanation: str | None = None
+class UpdateDecision:
+    final_page_content: str
+
+
+@dataclass(frozen=True)
+class RejectDecision:
+    rejection_reason_code: str
+    explanation: str
+
+
+RunnerDecision = UpdateDecision | RejectDecision
 
 
 @dataclass(frozen=True)
@@ -152,35 +158,13 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
-    if decision.action == "update":
-        final_page_content = decision.final_page_content
-        assert final_page_content is not None
-
-        if _utf8_len(final_page_content) > settings.max_output_bytes:
-            _emit_response(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
-            return 0
-
-        if final_page_content == current_page_content:
-            _emit_response(STATUS_UPDATE_FAILED, "NO_CONTENT_CHANGE", "model output did not change the current page content")
-            return 0
-
-        result = completion.complete_update(
-            target_page=envelope.target_page,
-            comment_identity=envelope.comment_identity,
-            final_page_content=final_page_content,
-        )
-    else:
-        replacement_comment = _build_rejection_comment(
-            comment_identity=envelope.comment_identity,
-            original_comment_text=envelope.original_comment_text,
-            rejection_reason_code=decision.rejection_reason_code or "",
-            explanation=decision.explanation or "",
-        )
-        result = completion.complete_rejection(
-            target_page=envelope.target_page,
-            comment_identity=envelope.comment_identity,
-            replacement_comment=replacement_comment,
-        )
+    result = _complete_runner_decision(
+        completion=completion,
+        decision=decision,
+        envelope=envelope,
+        current_page_content=current_page_content,
+        settings=settings,
+    )
 
     _emit_response(result.status, result.error_code, result.message)
     return 0
@@ -278,7 +262,7 @@ def _validate_model_payload(payload: object) -> RunnerDecision:
             raise ModelOutputError("update action must include final_page_content")
         if payload.get("rejection_reason_code") is not None or payload.get("explanation") is not None:
             raise ModelOutputError("update action must not include rejection fields")
-        return RunnerDecision(action="update", final_page_content=final_page_content)
+        return UpdateDecision(final_page_content=final_page_content)
 
     if action == "reject":
         rejection_reason_code = payload.get("rejection_reason_code")
@@ -289,13 +273,107 @@ def _validate_model_payload(payload: object) -> RunnerDecision:
             raise ModelOutputError("reject action must include a non-empty explanation")
         if payload.get("final_page_content") is not None:
             raise ModelOutputError("reject action must not include final_page_content")
-        return RunnerDecision(
-            action="reject",
+        return RejectDecision(
             rejection_reason_code=rejection_reason_code,
             explanation=explanation.strip(),
         )
 
     raise ModelOutputError("model output must set action to update or reject")
+
+
+def _complete_runner_decision(
+    *,
+    completion: RunnerCompletion,
+    decision: RunnerDecision,
+    envelope: PromptEnvelope,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult:
+    primary_action = _execute_primary_action(
+        completion=completion,
+        decision=decision,
+        envelope=envelope,
+        current_page_content=current_page_content,
+        settings=settings,
+    )
+    if isinstance(primary_action, CompletionResult):
+        return primary_action
+
+    return completion.complete_finalization(
+        target_page=envelope.target_page,
+        comment_identity=envelope.comment_identity,
+        primary_action=primary_action,
+    )
+
+
+def _execute_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: RunnerDecision,
+    envelope: PromptEnvelope,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    if isinstance(decision, UpdateDecision):
+        return _execute_update_primary_action(
+            completion=completion,
+            decision=decision,
+            target_page=envelope.target_page,
+            current_page_content=current_page_content,
+            settings=settings,
+        )
+
+    return _execute_rejection_primary_action(
+        completion=completion,
+        decision=decision,
+        comment_identity=envelope.comment_identity,
+        original_comment_text=envelope.original_comment_text,
+        target_page=envelope.target_page,
+    )
+
+
+def _execute_update_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: UpdateDecision,
+    target_page: str,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    if _utf8_len(decision.final_page_content) > settings.max_output_bytes:
+        return CompletionResult(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
+
+    if decision.final_page_content == current_page_content:
+        return CompletionResult(
+            STATUS_UPDATE_FAILED,
+            "NO_CONTENT_CHANGE",
+            "model output did not change the current page content",
+        )
+
+    return completion.complete_update_primary_action(
+        target_page=target_page,
+        final_page_content=decision.final_page_content,
+    )
+
+
+def _execute_rejection_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: RejectDecision,
+    comment_identity: str,
+    original_comment_text: str,
+    target_page: str,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    replacement_comment = _build_rejection_comment(
+        comment_identity=comment_identity,
+        original_comment_text=original_comment_text,
+        rejection_reason_code=decision.rejection_reason_code,
+        explanation=decision.explanation,
+    )
+    return completion.complete_rejection_primary_action(
+        target_page=target_page,
+        replacement_comment=replacement_comment,
+    )
 
 
 def _load_prompt_template() -> str:

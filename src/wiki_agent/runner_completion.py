@@ -19,6 +19,11 @@ class CompletionResult:
 
 
 @dataclass(frozen=True)
+class ConfirmedPrimaryAction:
+    success_status: str
+
+
+@dataclass(frozen=True)
 class RunnerCompletion:
     read_page: Callable[[str], str]
     save_page: Callable[[str, str], None]
@@ -26,13 +31,12 @@ class RunnerCompletion:
     list_comments: Callable[[str], list[dict[str, Any]]]
     delete_comment: Callable[[str, str], None]
 
-    def complete_update(
+    def complete_update_primary_action(
         self,
         *,
         target_page: str,
-        comment_identity: str,
         final_page_content: str,
-    ) -> CompletionResult:
+    ) -> CompletionResult | ConfirmedPrimaryAction:
         try:
             self.save_page(target_page, final_page_content)
         except Exception as exc:
@@ -50,19 +54,14 @@ class RunnerCompletion:
                 "saved page content did not match confirmation fetch",
             )
 
-        return self._complete_after_visible_work(
-            comment_identity=comment_identity,
-            target_page=target_page,
-            success_status=STATUS_SUCCESS,
-        )
+        return ConfirmedPrimaryAction(success_status=STATUS_SUCCESS)
 
-    def complete_rejection(
+    def complete_rejection_primary_action(
         self,
         *,
         target_page: str,
-        comment_identity: str,
         replacement_comment: str,
-    ) -> CompletionResult:
+    ) -> CompletionResult | ConfirmedPrimaryAction:
         try:
             self.create_comment(target_page, replacement_comment)
         except Exception as exc:
@@ -84,18 +83,14 @@ class RunnerCompletion:
                 "replacement comment was not present during confirmation",
             )
 
-        return self._complete_after_visible_work(
-            comment_identity=comment_identity,
-            target_page=target_page,
-            success_status=STATUS_REJECTED_WITH_COMMENT,
-        )
+        return ConfirmedPrimaryAction(success_status=STATUS_REJECTED_WITH_COMMENT)
 
-    def _complete_after_visible_work(
+    def complete_finalization(
         self,
         *,
         comment_identity: str,
         target_page: str,
-        success_status: str,
+        primary_action: ConfirmedPrimaryAction,
     ) -> CompletionResult:
         try:
             self.delete_comment(comment_identity, target_page)
@@ -114,4 +109,4 @@ class RunnerCompletion:
                 "source comment still present after delete confirmation",
             )
 
-        return CompletionResult(success_status)
+        return CompletionResult(primary_action.success_status)
