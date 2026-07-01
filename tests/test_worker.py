@@ -46,6 +46,22 @@ def test_worker_maps_runner_invocation_failure_to_update_failed() -> None:
     assert repository.updated == [(1, "UPDATE_FAILED", "runner emitted invalid JSON on stdout")]
 
 
+def test_worker_routes_terminal_failure_outcomes_through_failure_feedback() -> None:
+    repository = FakeRepository(job=_job())
+    runner_client = FakeRunnerClient(error=RunnerInvocationError("runner emitted invalid JSON on stdout"))
+    failure_feedback = FakeFailureFeedback()
+
+    worker = Worker(
+        _config(),
+        repository=repository,
+        runner_client=runner_client,
+        failure_feedback=failure_feedback,
+    )
+    worker.run_once()
+
+    assert failure_feedback.jobs == [repository.updated_jobs[-1]]
+
+
 def test_worker_persists_already_processed_runner_status() -> None:
     repository = FakeRepository(job=_job())
     runner_client = FakeRunnerClient(
@@ -186,3 +202,11 @@ class FakeRunnerClient:
         if self._response is None:
             raise AssertionError("fake runner client requires response or error")
         return self._response
+
+
+class FakeFailureFeedback:
+    def __init__(self) -> None:
+        self.jobs: list[CommentJob] = []
+
+    def ensure_for_job(self, job: CommentJob) -> None:
+        self.jobs.append(job)

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from wiki_agent.comment_jobs import CommentJobRepository
 from wiki_agent.config import AppConfig
 from wiki_agent.domain import STATUS_UPDATE_FAILED
+from wiki_agent.failure_feedback import TerminalFailureFeedback
 from wiki_agent.scanner import Scanner, ScannerError
 from wiki_agent.worker import Worker, WorkerRunResult
 
@@ -37,11 +38,17 @@ class WikiAgentApp:
         worker: Worker | None = None,
         repository: CommentJobRepository | None = None,
         shutdown_event: threading.Event | None = None,
+        failure_feedback: TerminalFailureFeedback | None = None,
     ) -> None:
         self._config = config
         self._scanner = scanner or Scanner(config)
         self._repository = repository or CommentJobRepository(config.postgres.dsn)
-        self._worker = worker or Worker(config, repository=self._repository)
+        self._failure_feedback = failure_feedback or TerminalFailureFeedback(config)
+        self._worker = worker or Worker(
+            config,
+            repository=self._repository,
+            failure_feedback=self._failure_feedback,
+        )
         self._shutdown = shutdown_event or threading.Event()
 
     def run(self) -> int:
@@ -99,10 +106,13 @@ class WikiAgentApp:
         self._shutdown.set()
 
     def _run_service_cycle(self) -> None:
-        stale_count = self._repository.mark_stale_processing_jobs(
+        stale_jobs = self._repository.mark_stale_processing_jobs(
             now=datetime.now(tz=UTC),
             processing_timeout=self._config.service.stale_processing_timeout,
         )
+        for job in stale_jobs:
+            self._failure_feedback.ensure_for_job(job)
+        stale_count = len(stale_jobs)
         if stale_count:
             LOGGER.warning(
                 "Service marked stale processing jobs terminal.",

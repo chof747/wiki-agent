@@ -217,7 +217,9 @@ def test_repository_marks_stale_processing_jobs_failed() -> None:
         processing_timeout=timedelta(minutes=15),
     )
 
-    assert marked == 1
+    assert len(marked) == 1
+    assert marked[0].status == "UPDATE_FAILED"
+    assert marked[0].error_detail == "stale processing timeout"
     counts = repository.get_counts()
     assert counts.queued == 0
     assert counts.processing == 0
@@ -288,7 +290,9 @@ def test_repository_failover_marks_stale_processing_then_claims_next_job_when_po
         processing_timeout=timedelta(seconds=5),
     )
 
-    assert marked == 1
+    assert len(marked) == 1
+    assert marked[0].comment_identity == "comment-1"
+    assert marked[0].status == "UPDATE_FAILED"
 
     next_job = repository.claim_next_queued(claimed_at=scanned_at + timedelta(seconds=11))
     assert next_job is not None
@@ -561,14 +565,14 @@ class FakeCursor:
         if query.startswith("UPDATE comment_jobs SET status = 'UPDATE_FAILED'"):
             assert params is not None
             completed_at, cutoff = params
-            marked = 0
+            marked: list[tuple[Any, ...]] = []
             for row in self._database.rows:
                 if row["status"] == "processing" and row["claimed_at"] is not None and row["claimed_at"] < cutoff:
                     row["status"] = "UPDATE_FAILED"
                     row["completed_at"] = completed_at
                     row["error_detail"] = "stale processing timeout"
-                    marked += 1
-            self._result = [(marked,)]
+                    marked.append(_row_tuple(row))
+            self._result = marked
             return
         if query.startswith("SELECT status, COUNT(*) FROM comment_jobs"):
             counts: dict[str, int] = {}
