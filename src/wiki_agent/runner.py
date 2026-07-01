@@ -9,15 +9,12 @@ import tempfile
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from wiki_agent import environment
 from wiki_agent.config import load_config
-from wiki_agent.domain import (
-    STATUS_DELETE_FAILED,
-    STATUS_REJECTED_WITH_COMMENT,
-    STATUS_SUCCESS,
-    STATUS_UPDATE_FAILED,
-)
+from wiki_agent.domain import STATUS_UPDATE_FAILED
+from wiki_agent.runner_completion import RunnerCompletion
 from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output, parse_helper_page_output
 
@@ -105,6 +102,13 @@ class RunnerSettings:
 def main(argv: list[str] | None = None) -> int:
     del argv
     environment.load_repo_environment()
+    completion = RunnerCompletion(
+        read_page=_read_page,
+        save_page=_save_page,
+        create_comment=_create_comment,
+        list_comments=_list_comments,
+        delete_comment=_delete_comment,
+    )
 
     try:
         envelope = PromptEnvelope.from_stdin(sys.stdin)
@@ -161,25 +165,11 @@ def main(argv: list[str] | None = None) -> int:
             _emit_response(STATUS_UPDATE_FAILED, "NO_CONTENT_CHANGE", "model output did not change the current page content")
             return 0
 
-        try:
-            _save_page(envelope.target_page, final_page_content)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "PAGE_SAVE_FAILED", str(exc))
-            return 0
-
-        try:
-            confirmed_markdown = _read_page(envelope.target_page)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "UPDATE_CONFIRMATION_FAILED", str(exc))
-            return 0
-
-        if confirmed_markdown != final_page_content:
-            _emit_response(
-                STATUS_UPDATE_FAILED,
-                "UPDATE_CONFIRMATION_FAILED",
-                "saved page content did not match confirmation fetch",
-            )
-            return 0
+        result = completion.complete_update(
+            target_page=envelope.target_page,
+            comment_identity=envelope.comment_identity,
+            final_page_content=final_page_content,
+        )
     else:
         replacement_comment = _build_rejection_comment(
             comment_identity=envelope.comment_identity,
@@ -187,51 +177,13 @@ def main(argv: list[str] | None = None) -> int:
             rejection_reason_code=decision.rejection_reason_code or "",
             explanation=decision.explanation or "",
         )
-        try:
-            _create_comment(envelope.target_page, replacement_comment)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "COMMENT_CREATE_FAILED", str(exc))
-            return 0
-
-        try:
-            replacement_comments = _list_comments(envelope.target_page)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "REPLACEMENT_CONFIRMATION_FAILED", str(exc))
-            return 0
-
-        expected_replacement_comment = replacement_comment.strip()
-        if not any(
-            isinstance(comment.get("text"), str) and comment["text"].strip() == expected_replacement_comment
-            for comment in replacement_comments
-        ):
-            _emit_response(
-                STATUS_UPDATE_FAILED,
-                "REPLACEMENT_CONFIRMATION_FAILED",
-                "replacement comment was not present during confirmation",
-            )
-            return 0
-
-    try:
-        _delete_comment(envelope.comment_identity, envelope.target_page)
-    except HelperCommandError as exc:
-        _emit_response(STATUS_DELETE_FAILED, "COMMENT_DELETE_FAILED", str(exc))
-        return 0
-
-    try:
-        remaining_comments = _list_comments(envelope.target_page)
-    except HelperCommandError as exc:
-        _emit_response(STATUS_DELETE_FAILED, "DELETE_CONFIRMATION_FAILED", str(exc))
-        return 0
-
-    if any(comment.get("id") == envelope.comment_identity for comment in remaining_comments):
-        _emit_response(
-            STATUS_DELETE_FAILED,
-            "DELETE_CONFIRMATION_FAILED",
-            "source comment still present after delete confirmation",
+        result = completion.complete_rejection(
+            target_page=envelope.target_page,
+            comment_identity=envelope.comment_identity,
+            replacement_comment=replacement_comment,
         )
-        return 0
 
-    _emit_response(STATUS_SUCCESS if decision.action == "update" else STATUS_REJECTED_WITH_COMMENT)
+    _emit_response(result.status, result.error_code, result.message)
     return 0
 
 
