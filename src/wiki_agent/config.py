@@ -54,16 +54,44 @@ class AppConfig:
 
 
 def load_config(path: Path) -> AppConfig:
+    raw = _load_raw_config(path)
+    return AppConfig(
+        bot_name=_load_bot_name(raw),
+        postgres=_load_postgres_config(raw),
+        wikigo=_load_wikigo_config(raw),
+        runner=_load_runner_command(raw),
+        runner_openai=_load_runner_openai_config(raw),
+        service=_load_service_config(raw),
+    )
+
+
+def load_runner_openai_config(path: Path) -> RunnerOpenAIConfig:
+    return _load_runner_openai_config(_load_raw_config(path))
+
+
+def load_wikigo_config(path: Path) -> WikiGoConfig:
+    return _load_wikigo_config(_load_raw_config(path))
+
+
+def _load_raw_config(path: Path) -> dict[str, object]:
     if not path.exists():
         raise ConfigError(f"config file does not exist: {path}")
 
     with path.open("rb") as handle:
         raw = tomllib.load(handle)
+    if not isinstance(raw, dict):
+        raise ConfigError("config file must contain a TOML table")
+    return raw
 
+
+def _load_bot_name(raw: dict[str, object]) -> str:
     bot_name = _env_or_value("WIKI_AGENT_BOT_NAME", raw.get("bot_name"))
     if not isinstance(bot_name, str) or not bot_name.strip():
         raise ConfigError("bot_name must be a non-empty string")
+    return bot_name.strip()
 
+
+def _load_postgres_config(raw: dict[str, object]) -> PostgresConfig:
     postgres = raw.get("postgres")
     postgres_dsn = _env_or_value(
         "WIKI_AGENT_POSTGRES_DSN",
@@ -71,7 +99,10 @@ def load_config(path: Path) -> AppConfig:
     )
     if not isinstance(postgres_dsn, str) or not _looks_like_postgres_dsn(postgres_dsn):
         raise ConfigError("postgres.dsn must be a non-empty postgres DSN")
+    return PostgresConfig(dsn=postgres_dsn)
 
+
+def _load_wikigo_config(raw: dict[str, object]) -> WikiGoConfig:
     wikigo = raw.get("wikigo")
     if not isinstance(wikigo, dict):
         raise ConfigError("wikigo must be a table")
@@ -87,7 +118,14 @@ def load_config(path: Path) -> AppConfig:
     password = wikigo.get("password")
     if not isinstance(password, str) or not password.strip():
         raise ConfigError("wikigo.password must be a non-empty string")
+    return WikiGoConfig(
+        base_url=base_url.strip(),
+        username=username.strip(),
+        password=password.strip(),
+    )
 
+
+def _load_runner_command(raw: dict[str, object]) -> RunnerCommand:
     runner = raw.get("runner")
     runner_value = runner.get("command") if isinstance(runner, dict) else None
     runner_override = os.getenv("WIKI_AGENT_RUNNER_COMMAND_JSON")
@@ -99,6 +137,14 @@ def load_config(path: Path) -> AppConfig:
                 "WIKI_AGENT_RUNNER_COMMAND_JSON must be valid JSON"
             ) from exc
 
+    try:
+        return validate_runner_command(runner_value)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def _load_runner_openai_config(raw: dict[str, object]) -> RunnerOpenAIConfig:
+    runner = raw.get("runner")
     runner_openai = runner.get("openai") if isinstance(runner, dict) else None
     if not isinstance(runner_openai, dict):
         raise ConfigError("runner.openai must be a table")
@@ -132,6 +178,16 @@ def load_config(path: Path) -> AppConfig:
     if not _is_positive_float(timeout_seconds):
         raise ConfigError("runner.openai.timeout_seconds must be a positive number")
 
+    return RunnerOpenAIConfig(
+        api_key=openai_api_key.strip(),
+        model=openai_model.strip(),
+        max_input_bytes=int(max_input_bytes),
+        max_output_bytes=int(max_output_bytes),
+        timeout_seconds=float(timeout_seconds),
+    )
+
+
+def _load_service_config(raw: dict[str, object]) -> ServiceConfig:
     service = raw.get("service")
     log_level = _env_or_value(
         "WIKI_AGENT_LOG_LEVEL",
@@ -153,33 +209,10 @@ def load_config(path: Path) -> AppConfig:
         ),
         field_name="service.stale_processing_timeout",
     )
-
-    try:
-        runner_command = validate_runner_command(runner_value)
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
-
-    return AppConfig(
-        bot_name=bot_name.strip(),
-        postgres=PostgresConfig(dsn=postgres_dsn),
-        wikigo=WikiGoConfig(
-            base_url=base_url.strip(),
-            username=username.strip(),
-            password=password.strip(),
-        ),
-        runner=runner_command,
-        runner_openai=RunnerOpenAIConfig(
-            api_key=openai_api_key.strip(),
-            model=openai_model.strip(),
-            max_input_bytes=int(max_input_bytes),
-            max_output_bytes=int(max_output_bytes),
-            timeout_seconds=float(timeout_seconds),
-        ),
-        service=ServiceConfig(
-            log_level=log_level.strip().upper(),
-            scan_interval=scan_interval,
-            stale_processing_timeout=stale_processing_timeout,
-        ),
+    return ServiceConfig(
+        log_level=log_level.strip().upper(),
+        scan_interval=scan_interval,
+        stale_processing_timeout=stale_processing_timeout,
     )
 
 
