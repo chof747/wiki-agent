@@ -192,6 +192,22 @@ _Avoid_: retry loop
 A non-mutating mode that scans and reports what would be enqueued without writing jobs or invoking the runner.
 _Avoid_: test processing
 
+**Runtime Responsibility Package Layout**:
+The preferred way to organize source modules by the runtime responsibility they support, such as scanning, working, running, Wiki-Go integration, jobs, and operational support.
+_Avoid_: MVC layout, model/service/workflow/utilities buckets
+
+**Capability**:
+A bounded Runner-owned ability that can enrich an Invocation without changing the Scanner, Worker, Comment Job, or Prompt Envelope contracts.
+_Avoid_: service, connector, plugin
+
+**Contract Module**:
+A source module that defines a stable data or process boundary shared across runtime components, such as a Prompt Envelope or Runner response shape.
+_Avoid_: model
+
+**Operational Support Module**:
+A source module that supports configuration, environment loading, logging, installation checks, or similar operator-facing runtime concerns.
+_Avoid_: utility
+
 ## Relationships
 
 - The **Comment Agent** runs as one long-running foreground process by default.
