@@ -11,8 +11,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from wiki_agent import environment
-from wiki_agent.config import load_config
+from wiki_agent.ops import environment
+from wiki_agent.ops.config import load_config
 from wiki_agent.domain import (
     STATUS_DELETE_FAILED,
     STATUS_REJECTED_WITH_COMMENT,

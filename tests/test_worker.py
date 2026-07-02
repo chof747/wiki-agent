@@ -4,9 +4,9 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from wiki_agent.comment_jobs import CommentJob
-from wiki_agent.config import load_config
-from wiki_agent.runner_client import RunnerInvocationError, RunnerResponse
+from wiki_agent.contracts.runner_client import RunnerInvocationError, RunnerResponse
+from wiki_agent.jobs.comment_jobs import CommentJob
+from wiki_agent.ops.config import load_config
 from wiki_agent.worker import InvocationOutcome, Worker, WorkerRunResult
 
 

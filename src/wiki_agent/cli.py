@@ -9,10 +9,10 @@ from types import FrameType
 from typing import Callable
 
 from wiki_agent.app import WikiAgentApp
-from wiki_agent.check import run_installation_shakedown
-from wiki_agent.config import ConfigError, load_config
-from wiki_agent import environment
-from wiki_agent.logging import configure_logging
+from wiki_agent.ops.check import run_installation_shakedown
+from wiki_agent.ops.config import ConfigError, load_config
+from wiki_agent.ops import environment
+from wiki_agent.ops.logging import configure_logging
 
 
 LOGGER = logging.getLogger(__name__)

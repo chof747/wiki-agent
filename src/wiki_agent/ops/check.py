@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from wiki_agent.comment_jobs import CommentJobRepository
-from wiki_agent.config import AppConfig
 from wiki_agent.domain import STATUS_UPDATE_FAILED
-from wiki_agent.runner_client import RunnerInvocationError, parse_runner_response
+from wiki_agent.jobs.comment_jobs import CommentJobRepository
+from wiki_agent.ops.config import AppConfig
 from wiki_agent.scanner import ScannerError, parse_scan_helper_output
+from wiki_agent.contracts.runner_client import RunnerInvocationError, parse_runner_response
 
 
 RUNNER_SMOKE_ENVELOPE = "{}"

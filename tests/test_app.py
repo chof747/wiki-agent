@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from wiki_agent.app import WikiAgentApp
-from wiki_agent.comment_jobs import CommentJob, EnqueueResult
-from wiki_agent.config import load_config
+from wiki_agent.jobs.comment_jobs import CommentJob, EnqueueResult
+from wiki_agent.ops.config import load_config
 from wiki_agent.scanner import CommentEvent, ScannerError
 from wiki_agent.worker import InvocationOutcome, WorkerRunResult
 

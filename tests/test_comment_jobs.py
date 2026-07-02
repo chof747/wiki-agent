@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from wiki_agent.app import WikiAgentApp
-from wiki_agent.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
-from wiki_agent.config import load_config
+from wiki_agent.jobs.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
+from wiki_agent.ops.config import load_config
 from wiki_agent.scanner import CommentEvent, ScannerError
 from wiki_agent.worker import WorkerRunResult
 

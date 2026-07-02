@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from wiki_agent.domain import ALLOWED_INVOCATION_STATUSES
 
 if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import CommentJob
+    from wiki_agent.jobs.comment_jobs import CommentJob
 
 
 class RunnerConfigError(ValueError):
@@ -49,6 +49,8 @@ class RunnerInvocationError(RuntimeError):
 
 
 DEFAULT_RUNNER_TIMEOUT = timedelta(minutes=15)
+
+
 class RunnerClient:
     def __init__(
         self,

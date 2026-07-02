@@ -5,8 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from wiki_agent.check import run_installation_shakedown
-from wiki_agent.config import load_config
+from wiki_agent.ops.check import run_installation_shakedown
+from wiki_agent.ops.config import load_config
 
 
 def test_installation_shakedown_reports_success_with_non_openai_runner_probe() -> None:
