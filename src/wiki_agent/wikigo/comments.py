@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from wiki_agent.wikigo_adapter import normalize_comments_payload
-from wiki_agent.wikigo_runtime import WikiGoSession, quote_page
+from wiki_agent.wikigo.adapter import normalize_comments_payload
+from wiki_agent.wikigo.runtime import WikiGoSession, quote_page
 
 
 def normalize_comments(payload: dict[str, Any]) -> list[dict[str, Any]]:

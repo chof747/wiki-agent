@@ -5,10 +5,10 @@ import json
 import sys
 from pathlib import Path
 
-from wiki_agent import wikigo_comment_operations as _comment_operations
-from wiki_agent import wikigo_discovery_operations as _discovery_operations
-from wiki_agent import wikigo_page_operations as _page_operations
-from wiki_agent import wikigo_runtime as _runtime
+from wiki_agent.wikigo import comments as _comments
+from wiki_agent.wikigo import discovery as _discovery
+from wiki_agent.wikigo import pages as _pages
+from wiki_agent.wikigo import runtime as _runtime
 
 
 SUPPORTED_WIKIGO_VERSION = "1.8.9"
@@ -17,17 +17,17 @@ WikiGoSession = _runtime.WikiGoSession
 load_runtime_config = _runtime.load_runtime_config
 quote_page = _runtime.quote_page
 
-normalize_comments = _comment_operations.normalize_comments
-read_comments_payload = _comment_operations.read_comments_payload
-delete_comment = _comment_operations.delete_comment
-create_comment = _comment_operations.create_comment
+normalize_comments = _comments.normalize_comments
+read_comments_payload = _comments.read_comments_payload
+delete_comment = _comments.delete_comment
+create_comment = _comments.create_comment
 
-extract_markdown = _page_operations.extract_markdown
-emit_page_get = _page_operations.emit_page_get
-save_page = _page_operations.save_page
-read_page_source = _page_operations.read_page_source
+extract_markdown = _pages.extract_markdown
+emit_page_get = _pages.emit_page_get
+save_page = _pages.save_page
+read_page_source = _pages.read_page_source
 
-discover_pages = _discovery_operations.discover_pages
+discover_pages = _discovery.discover_pages
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,13 +60,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "comments-scan":
         session = create_session(config)
-        payload = _discovery_operations.scan_comments(session, username=str(config["username"]))
+        payload = _discovery.scan_comments(session, username=str(config["username"]))
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "create-document":
         session = create_session(config)
-        _page_operations.create_document(session, args.title, args.path, args.content_file)
+        _pages.create_document(session, args.title, args.path, args.content_file)
         return 0
 
     parser.error("unsupported command")
@@ -135,7 +135,7 @@ def _run_api_command(session: WikiGoSession, args: argparse.Namespace) -> bytes:
 def _run_comments_command(args: argparse.Namespace, *, config: dict[str, str]) -> int:
     session = create_session(config)
     if args.comments_command == "list":
-        comments = _comment_operations.list_comments(
+        comments = _comments.list_comments(
             session,
             args.page,
             mention_only=args.mention_only,

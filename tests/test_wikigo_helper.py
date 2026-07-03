@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from wiki_agent import wikigo_helper
+from wiki_agent.wikigo import helper as wikigo_helper
 
 
 def test_page_get_reads_source_endpoint_and_emits_markdown(monkeypatch, capsys) -> None:

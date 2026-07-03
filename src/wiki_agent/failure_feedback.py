@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from wiki_agent.domain import STATUS_DELETE_FAILED, STATUS_UPDATE_FAILED
-from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output
+from wiki_agent.wikigo.adapter import WikiGoAdapterError, parse_helper_comments_output
 
 if TYPE_CHECKING:
     from wiki_agent.jobs.comment_jobs import CommentJob

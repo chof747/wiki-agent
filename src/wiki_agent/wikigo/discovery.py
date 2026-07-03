@@ -4,8 +4,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any
 
-from wiki_agent.wikigo_comment_operations import list_comments
-from wiki_agent.wikigo_runtime import WikiGoSession
+from wiki_agent.wikigo.comments import list_comments
+from wiki_agent.wikigo.runtime import WikiGoSession
 
 
 def discover_pages(session: WikiGoSession) -> list[str]:
