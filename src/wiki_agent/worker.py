@@ -4,14 +4,14 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from wiki_agent.comment_jobs import CommentJobRepository
-from wiki_agent.config import AppConfig
+from wiki_agent.contracts.runner_client import RunnerClient, RunnerInvocationError
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.failure_feedback import TerminalFailureFeedback
-from wiki_agent.runner_client import RunnerClient, RunnerInvocationError
+from wiki_agent.jobs.comment_jobs import CommentJobRepository
+from wiki_agent.ops.config import AppConfig
 
 if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import CommentJob
+    from wiki_agent.jobs.comment_jobs import CommentJob
 
 
 LOGGER = logging.getLogger(__name__)

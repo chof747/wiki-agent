@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from wiki_agent.comment_jobs import CommentJob
-from wiki_agent.config import load_config
+from wiki_agent.jobs.comment_jobs import CommentJob
+from wiki_agent.ops.config import load_config
 from wiki_agent.failure_feedback import TerminalFailureFeedback
 
 

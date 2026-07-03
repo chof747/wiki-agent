@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent import runner
 
 

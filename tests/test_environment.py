@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from wiki_agent.environment import load_repo_environment
+from wiki_agent.ops.environment import load_repo_environment
 
 
 def test_load_repo_environment_sets_missing_values_from_repo_dotenv(monkeypatch, tmp_path) -> None:

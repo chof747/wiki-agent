@@ -11,11 +11,11 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from wiki_agent import environment
-from wiki_agent.config import load_runner_openai_config
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.domain import STATUS_UPDATE_FAILED
+from wiki_agent.ops import environment
+from wiki_agent.ops.config import load_runner_openai_config
 from wiki_agent.runner_completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
-from wiki_agent.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output, parse_helper_page_output
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wiki_agent.config import load_config
+from wiki_agent.ops.config import load_config
 
 
 def test_env_override_for_postgres_dsn(monkeypatch) -> None:

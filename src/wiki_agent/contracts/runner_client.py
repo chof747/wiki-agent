@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope
 from wiki_agent.domain import ALLOWED_INVOCATION_STATUSES
-from wiki_agent.prompt_envelope import PromptEnvelope
 
 if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import CommentJob
+    from wiki_agent.jobs.comment_jobs import CommentJob
 
 
 class RunnerConfigError(ValueError):

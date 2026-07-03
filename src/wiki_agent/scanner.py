@@ -4,7 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from wiki_agent.config import AppConfig
+from wiki_agent.ops.config import AppConfig
 from wiki_agent.wikigo_adapter import WikiGoAdapterError, normalize_scan_record, parse_scan_helper_output
 
 

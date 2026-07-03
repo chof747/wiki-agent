@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import wiki_agent.environment as environment
+import wiki_agent.ops.environment as environment
 from wiki_agent import cli
 
 

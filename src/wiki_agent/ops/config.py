@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
-from wiki_agent.runner_client import RunnerCommand, validate_runner_command
+from wiki_agent.contracts.runner_client import RunnerCommand, validate_runner_command
 
 
 class ConfigError(ValueError):

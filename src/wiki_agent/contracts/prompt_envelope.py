@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TextIO
 
 if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import CommentJob
+    from wiki_agent.jobs.comment_jobs import CommentJob
 
 
 class PromptEnvelopeError(ValueError):
