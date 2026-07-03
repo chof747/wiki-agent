@@ -35,4 +35,4 @@ addopts = "-m 'not integration'"
 packages = ["src/wiki_agent", "tools"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/wiki_agent/prompts/page_update_prompt.md" = "wiki_agent/prompts/page_update_prompt.md"
+"src/wiki_agent/runner/prompts/page_update_prompt.md" = "wiki_agent/runner/prompts/page_update_prompt.md"

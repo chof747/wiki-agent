@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from wiki_agent import environment
+from wiki_agent.ops import environment
 
 
 UV_CACHE_DIR = "/private/tmp/uv-cache"

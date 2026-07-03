@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,11 +7,8 @@ from typing import Any
 
 import pytest
 
-from wiki_agent.app import WikiAgentApp
-from wiki_agent.comment_jobs import CommentJob, CommentJobRepository, EnqueueResult
-from wiki_agent.config import load_config
-from wiki_agent.scanner import CommentEvent, ScannerError
-from wiki_agent.worker import WorkerRunResult
+from wiki_agent.jobs.comment_jobs import CommentJob, CommentJobRepository
+from wiki_agent.scanner import CommentEvent
 
 
 def test_repository_ensure_schema_runs_idempotent_ddl() -> None:
@@ -217,7 +213,9 @@ def test_repository_marks_stale_processing_jobs_failed() -> None:
         processing_timeout=timedelta(minutes=15),
     )
 
-    assert marked == 1
+    assert len(marked) == 1
+    assert marked[0].status == "UPDATE_FAILED"
+    assert marked[0].error_detail == "stale processing timeout"
     counts = repository.get_counts()
     assert counts.queued == 0
     assert counts.processing == 0
@@ -288,63 +286,13 @@ def test_repository_failover_marks_stale_processing_then_claims_next_job_when_po
         processing_timeout=timedelta(seconds=5),
     )
 
-    assert marked == 1
+    assert len(marked) == 1
+    assert marked[0].comment_identity == "comment-1"
+    assert marked[0].status == "UPDATE_FAILED"
 
     next_job = repository.claim_next_queued(claimed_at=scanned_at + timedelta(seconds=11))
     assert next_job is not None
     assert next_job.comment_identity == "comment-2"
-
-
-def test_run_once_scans_and_enqueues_before_worker() -> None:
-    config = load_config(_fixture_config_path())
-    repository = FakeRepository()
-    worker = FakeWorker()
-    scanner = FakeScanner([_event(comment_identity="comment-1"), _event(comment_identity="comment-2")])
-    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
-
-    cycle = app.run_comment_agent_cycle()
-
-    assert repository.schema_ensured is True
-    assert scanner.scan_calls == 1
-    assert [event.comment_identity for event in repository.enqueued] == ["comment-1", "comment-2"]
-    assert worker.run_calls == 1
-    assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
-    assert cycle.worker_run_result == worker.result
-
-
-def test_run_once_dry_run_scans_once_and_emits_comment_events(capsys) -> None:  # type: ignore[no-untyped-def]
-    config = load_config(_fixture_config_path())
-    repository = FakeRepository()
-    worker = FakeWorker()
-    scanner = FakeScanner([_event(comment_identity="comment-1"), _event(comment_identity="comment-2")])
-    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
-
-    return_code = app.run_once(dry_run=True)
-
-    assert return_code == 0
-    assert scanner.scan_calls == 1
-    assert repository.schema_ensured is False
-    assert repository.enqueued == []
-    assert worker.run_calls == 0
-    assert json.loads(capsys.readouterr().out) == {
-        "comment_events": [event.as_dict() for event in scanner._events]
-    }
-
-
-def test_run_once_dry_run_handles_scan_error_without_schema_or_worker() -> None:
-    config = load_config(_fixture_config_path())
-    repository = FakeRepository()
-    worker = FakeWorker()
-    scanner = FakeScanner(error=ScannerError("boom"))
-    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
-
-    return_code = app.run_once(dry_run=True)
-
-    assert return_code == 1
-    assert scanner.scan_calls == 1
-    assert repository.schema_ensured is False
-    assert repository.enqueued == []
-    assert worker.run_calls == 0
 
 
 def _event(
@@ -365,66 +313,7 @@ def _event(
 
 
 def _fixture_config_path():
-    return Path(__file__).parent / "fixtures" / "config.toml"
-
-
-class FakeRepository:
-    def __init__(self) -> None:
-        self.schema_ensured = False
-        self.enqueued: list[CommentEvent] = []
-
-    def ensure_schema(self) -> None:
-        self.schema_ensured = True
-
-    def enqueue_event(self, event: CommentEvent, *, scanned_at=None):  # type: ignore[no-untyped-def]
-        self.enqueued.append(event)
-        return EnqueueResult(
-            action="inserted",
-            job=CommentJob(
-                id=len(self.enqueued),
-                source_system=str(event.source_metadata["source_system"]),
-                comment_identity=event.comment_identity,
-                target_page=event.target_page,
-                original_comment_text=event.original_comment_text,
-                prompt=event.prompt,
-                source_metadata=event.source_metadata,
-                status="queued",
-                receipt_count=1,
-                first_scanned_at=datetime(2026, 5, 24, 20, 0, tzinfo=UTC),
-                last_scanned_at=datetime(2026, 5, 24, 20, 0, tzinfo=UTC),
-                claimed_at=None,
-                completed_at=None,
-                error_detail=None,
-            ),
-        )
-
-
-class FakeWorker:
-    def __init__(self) -> None:
-        self.run_calls = 0
-        self.result = WorkerRunResult(invocation=None)
-
-    def run_once(self) -> WorkerRunResult:
-        self.run_calls += 1
-        return self.result
-
-
-class FakeScanner:
-    def __init__(
-        self,
-        events: list[CommentEvent] | None = None,
-        *,
-        error: ScannerError | None = None,
-    ) -> None:
-        self._events = events or []
-        self._error = error
-        self.scan_calls = 0
-
-    def scan(self) -> list[CommentEvent]:
-        self.scan_calls += 1
-        if self._error is not None:
-            raise self._error
-        return list(self._events)
+    return Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"
 
 
 class FakeDatabase:
@@ -561,14 +450,14 @@ class FakeCursor:
         if query.startswith("UPDATE comment_jobs SET status = 'UPDATE_FAILED'"):
             assert params is not None
             completed_at, cutoff = params
-            marked = 0
+            marked: list[tuple[Any, ...]] = []
             for row in self._database.rows:
                 if row["status"] == "processing" and row["claimed_at"] is not None and row["claimed_at"] < cutoff:
                     row["status"] = "UPDATE_FAILED"
                     row["completed_at"] = completed_at
                     row["error_detail"] = "stale processing timeout"
-                    marked += 1
-            self._result = [(marked,)]
+                    marked.append(_row_tuple(row))
+            self._result = marked
             return
         if query.startswith("SELECT status, COUNT(*) FROM comment_jobs"):
             counts: dict[str, int] = {}

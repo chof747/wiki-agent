@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from wiki_agent.app import WikiAgentApp
-from wiki_agent.comment_jobs import CommentJob, EnqueueResult
-from wiki_agent.config import load_config
+from wiki_agent.jobs.comment_jobs import CommentJob, EnqueueResult
+from wiki_agent.ops.config import load_config
 from wiki_agent.scanner import CommentEvent, ScannerError
 from wiki_agent.worker import InvocationOutcome, WorkerRunResult
 
@@ -152,6 +153,82 @@ def test_run_logs_and_continues_after_scan_failure(caplog) -> None:
     ]
 
 
+def test_run_routes_stale_processing_failures_through_failure_feedback(caplog) -> None:
+    config = load_config(_fixture_config_path())
+    stale_job = _invocation("comment-1", "UPDATE_FAILED").job
+    repository = FakeServiceRepository(lock=FakeLockHandle(), stale_jobs=[stale_job])
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([])
+    shutdown = FakeShutdownEvent([True])
+    failure_feedback = FakeFailureFeedback()
+    app = WikiAgentApp(
+        config,
+        scanner=scanner,
+        worker=worker,
+        repository=repository,
+        shutdown_event=shutdown,
+        failure_feedback=failure_feedback,
+    )
+
+    with caplog.at_level(logging.INFO):
+        return_code = app.run()
+
+    assert return_code == 0
+    assert failure_feedback.jobs == [stale_job]
+
+
+def test_run_comment_agent_cycle_scans_and_enqueues_before_worker() -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1"), _event("comment-2")])
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    cycle = app.run_comment_agent_cycle()
+
+    assert repository.schema_ensured is True
+    assert scanner.scan_calls == 1
+    assert repository.enqueued == ["comment-1", "comment-2"]
+    assert worker.run_calls == 1
+    assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
+    assert cycle.worker_run_result == WorkerRunResult(invocation=None)
+
+
+def test_run_once_dry_run_scans_once_and_emits_comment_events(capsys) -> None:  # type: ignore[no-untyped-def]
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1"), _event("comment-2")])
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 0
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "comment_events": [event.as_dict() for event in scanner._events]
+    }
+
+
+def test_run_once_dry_run_handles_scan_error_without_schema_or_worker() -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner(error=ScannerError("boom"))
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 1
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
+
+
 def _fixture_config_path() -> Path:
     return Path(__file__).parent / "fixtures" / "config.toml"
 
@@ -195,12 +272,19 @@ def _events(records: list[logging.LogRecord]) -> list[str]:
 
 
 class FakeServiceRepository:
-    def __init__(self, *, lock: FakeLockHandle | None, enqueue_actions: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        lock: FakeLockHandle | None,
+        enqueue_actions: list[str] | None = None,
+        stale_jobs: list[CommentJob] | None = None,
+    ) -> None:
         self.lock = lock
         self.schema_ensured = False
         self.marked_stale: list[timedelta] = []
         self.enqueued: list[str] = []
         self._enqueue_actions = list(enqueue_actions or [])
+        self._stale_jobs = list(stale_jobs or [])
 
     def try_acquire_singleton_lock(self) -> FakeLockHandle | None:
         return self.lock
@@ -210,7 +294,7 @@ class FakeServiceRepository:
 
     def mark_stale_processing_jobs(self, *, now=None, processing_timeout: timedelta):  # type: ignore[no-untyped-def]
         self.marked_stale.append(processing_timeout)
-        return 0
+        return list(self._stale_jobs)
 
     def enqueue_event(self, event: CommentEvent, *, scanned_at=None):  # type: ignore[no-untyped-def]
         self.enqueued.append(event.comment_identity)
@@ -264,6 +348,14 @@ class FakeScanner:
         if self._error is not None:
             raise self._error
         return list(self._events)
+
+
+class FakeFailureFeedback:
+    def __init__(self) -> None:
+        self.jobs: list[CommentJob] = []
+
+    def ensure_for_job(self, job: CommentJob) -> None:
+        self.jobs.append(job)
 
 
 class FakeShutdownEvent:

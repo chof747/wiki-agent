@@ -5,8 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from wiki_agent.check import run_installation_shakedown
-from wiki_agent.config import load_config
+from wiki_agent.ops.check import run_installation_shakedown
+from wiki_agent.ops.config import load_config
 
 
 def test_installation_shakedown_reports_success_with_non_openai_runner_probe() -> None:
@@ -152,4 +152,4 @@ def test_installation_shakedown_reports_actionable_runner_failure() -> None:
 
 
 def _fixture_config_path() -> Path:
-    return Path(__file__).parent / "fixtures" / "config.toml"
+    return Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"

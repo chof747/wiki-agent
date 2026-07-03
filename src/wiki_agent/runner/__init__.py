@@ -11,15 +11,16 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from wiki_agent import environment
-from wiki_agent.config import load_config
-from wiki_agent.domain import (
-    STATUS_DELETE_FAILED,
-    STATUS_REJECTED_WITH_COMMENT,
-    STATUS_SUCCESS,
-    STATUS_UPDATE_FAILED,
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
+from wiki_agent.domain import STATUS_UPDATE_FAILED
+from wiki_agent.ops import environment
+from wiki_agent.ops.config import load_runner_openai_config
+from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
+from wiki_agent.wikigo.adapter import (
+    WikiGoAdapterError,
+    parse_helper_comments_output,
+    parse_helper_page_output,
 )
-from wiki_agent.wikigo_adapter import WikiGoAdapterError, parse_helper_comments_output, parse_helper_page_output
 
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-2024-08-06"
@@ -28,7 +29,7 @@ DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
-PROMPT_TEMPLATE_PACKAGE = "wiki_agent.prompts"
+PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
 REQUIRED_PROMPT_TOKENS = (
     "{{TARGET_PAGE}}",
     "{{PROMPT}}",
@@ -46,10 +47,6 @@ REJECTION_REASON_CODES = {
 }
 
 
-class RunnerContractError(ValueError):
-    """Raised when the prompt envelope is malformed."""
-
-
 class PromptTemplateError(ValueError):
     """Raised when the prompt template cannot be rendered safely."""
 
@@ -63,11 +60,17 @@ class ModelOutputError(ValueError):
 
 
 @dataclass(frozen=True)
-class RunnerDecision:
-    action: str
-    final_page_content: str | None = None
-    rejection_reason_code: str | None = None
-    explanation: str | None = None
+class UpdateDecision:
+    final_page_content: str
+
+
+@dataclass(frozen=True)
+class RejectDecision:
+    rejection_reason_code: str
+    explanation: str
+
+
+RunnerDecision = UpdateDecision | RejectDecision
 
 
 @dataclass(frozen=True)
@@ -80,8 +83,7 @@ class RunnerSettings:
 
     @classmethod
     def from_env(cls) -> "RunnerSettings":
-        config = _load_app_config_from_env()
-        config_openai = config.runner_openai if config is not None else None
+        config_openai = _load_runner_openai_config_from_env()
         return cls(
             api_key=_read_non_empty_string_env(
                 "OPENAI_API_KEY",
@@ -106,56 +108,26 @@ class RunnerSettings:
         )
 
 
-@dataclass(frozen=True)
-class RunnerEnvelope:
-    prompt: str
-    original_comment_text: str
-    target_page: str
-    comment_identity: str
-
-    @classmethod
-    def from_stdin(cls) -> "RunnerEnvelope":
-        try:
-            payload = json.load(sys.stdin)
-        except json.JSONDecodeError as exc:
-            raise RunnerContractError("stdin must contain one JSON prompt envelope") from exc
-
-        if not isinstance(payload, dict):
-            raise RunnerContractError("prompt envelope must be a JSON object")
-
-        expected_keys = {"prompt", "original_comment_text", "target_page", "comment_identity"}
-        unexpected_keys = sorted(set(payload) - expected_keys)
-        if unexpected_keys:
-            raise RunnerContractError(
-                "prompt envelope contains unexpected field(s): " + ", ".join(unexpected_keys)
-            )
-
-        prompt = _require_string(payload, "prompt")
-        original_comment_text = _require_string(payload, "original_comment_text")
-        target_page = _require_string(payload, "target_page")
-        comment_identity = _require_string(payload, "comment_identity")
-
-        return cls(
-            prompt=prompt,
-            original_comment_text=original_comment_text,
-            target_page=target_page,
-            comment_identity=comment_identity,
-        )
-
-
 def main(argv: list[str] | None = None) -> int:
     del argv
     environment.load_repo_environment()
+    completion = RunnerCompletion(
+        read_page=_read_page,
+        save_page=_save_page,
+        create_comment=_create_comment,
+        list_comments=_list_comments,
+        delete_comment=_delete_comment,
+    )
 
     try:
-        envelope = RunnerEnvelope.from_stdin()
-    except RunnerContractError as exc:
+        envelope = PromptEnvelope.from_stdin(sys.stdin)
+    except PromptEnvelopeError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "PROMPT_ENVELOPE_INVALID", str(exc))
         return 0
 
     try:
         settings = RunnerSettings.from_env()
-    except RunnerContractError as exc:
+    except ValueError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "RUNNER_CONFIG_INVALID", str(exc))
         return 0
 
@@ -190,89 +162,15 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
-    if decision.action == "update":
-        final_page_content = decision.final_page_content
-        assert final_page_content is not None
+    result = _complete_runner_decision(
+        completion=completion,
+        decision=decision,
+        envelope=envelope,
+        current_page_content=current_page_content,
+        settings=settings,
+    )
 
-        if _utf8_len(final_page_content) > settings.max_output_bytes:
-            _emit_response(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
-            return 0
-
-        if final_page_content == current_page_content:
-            _emit_response(STATUS_UPDATE_FAILED, "NO_CONTENT_CHANGE", "model output did not change the current page content")
-            return 0
-
-        try:
-            _save_page(envelope.target_page, final_page_content)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "PAGE_SAVE_FAILED", str(exc))
-            return 0
-
-        try:
-            confirmed_markdown = _read_page(envelope.target_page)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "UPDATE_CONFIRMATION_FAILED", str(exc))
-            return 0
-
-        if confirmed_markdown != final_page_content:
-            _emit_response(
-                STATUS_UPDATE_FAILED,
-                "UPDATE_CONFIRMATION_FAILED",
-                "saved page content did not match confirmation fetch",
-            )
-            return 0
-    else:
-        replacement_comment = _build_rejection_comment(
-            comment_identity=envelope.comment_identity,
-            original_comment_text=envelope.original_comment_text,
-            rejection_reason_code=decision.rejection_reason_code or "",
-            explanation=decision.explanation or "",
-        )
-        try:
-            _create_comment(envelope.target_page, replacement_comment)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "COMMENT_CREATE_FAILED", str(exc))
-            return 0
-
-        try:
-            replacement_comments = _list_comments(envelope.target_page)
-        except HelperCommandError as exc:
-            _emit_response(STATUS_UPDATE_FAILED, "REPLACEMENT_CONFIRMATION_FAILED", str(exc))
-            return 0
-
-        expected_replacement_comment = replacement_comment.strip()
-        if not any(
-            isinstance(comment.get("text"), str) and comment["text"].strip() == expected_replacement_comment
-            for comment in replacement_comments
-        ):
-            _emit_response(
-                STATUS_UPDATE_FAILED,
-                "REPLACEMENT_CONFIRMATION_FAILED",
-                "replacement comment was not present during confirmation",
-            )
-            return 0
-
-    try:
-        _delete_comment(envelope.comment_identity, envelope.target_page)
-    except HelperCommandError as exc:
-        _emit_response(STATUS_DELETE_FAILED, "COMMENT_DELETE_FAILED", str(exc))
-        return 0
-
-    try:
-        remaining_comments = _list_comments(envelope.target_page)
-    except HelperCommandError as exc:
-        _emit_response(STATUS_DELETE_FAILED, "DELETE_CONFIRMATION_FAILED", str(exc))
-        return 0
-
-    if any(comment.get("id") == envelope.comment_identity for comment in remaining_comments):
-        _emit_response(
-            STATUS_DELETE_FAILED,
-            "DELETE_CONFIRMATION_FAILED",
-            "source comment still present after delete confirmation",
-        )
-        return 0
-
-    _emit_response(STATUS_SUCCESS if decision.action == "update" else STATUS_REJECTED_WITH_COMMENT)
+    _emit_response(result.status, result.error_code, result.message)
     return 0
 
 
@@ -368,7 +266,7 @@ def _validate_model_payload(payload: object) -> RunnerDecision:
             raise ModelOutputError("update action must include final_page_content")
         if payload.get("rejection_reason_code") is not None or payload.get("explanation") is not None:
             raise ModelOutputError("update action must not include rejection fields")
-        return RunnerDecision(action="update", final_page_content=final_page_content)
+        return UpdateDecision(final_page_content=final_page_content)
 
     if action == "reject":
         rejection_reason_code = payload.get("rejection_reason_code")
@@ -379,13 +277,107 @@ def _validate_model_payload(payload: object) -> RunnerDecision:
             raise ModelOutputError("reject action must include a non-empty explanation")
         if payload.get("final_page_content") is not None:
             raise ModelOutputError("reject action must not include final_page_content")
-        return RunnerDecision(
-            action="reject",
+        return RejectDecision(
             rejection_reason_code=rejection_reason_code,
             explanation=explanation.strip(),
         )
 
     raise ModelOutputError("model output must set action to update or reject")
+
+
+def _complete_runner_decision(
+    *,
+    completion: RunnerCompletion,
+    decision: RunnerDecision,
+    envelope: PromptEnvelope,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult:
+    primary_action = _execute_primary_action(
+        completion=completion,
+        decision=decision,
+        envelope=envelope,
+        current_page_content=current_page_content,
+        settings=settings,
+    )
+    if isinstance(primary_action, CompletionResult):
+        return primary_action
+
+    return completion.complete_finalization(
+        target_page=envelope.target_page,
+        comment_identity=envelope.comment_identity,
+        primary_action=primary_action,
+    )
+
+
+def _execute_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: RunnerDecision,
+    envelope: PromptEnvelope,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    if isinstance(decision, UpdateDecision):
+        return _execute_update_primary_action(
+            completion=completion,
+            decision=decision,
+            target_page=envelope.target_page,
+            current_page_content=current_page_content,
+            settings=settings,
+        )
+
+    return _execute_rejection_primary_action(
+        completion=completion,
+        decision=decision,
+        comment_identity=envelope.comment_identity,
+        original_comment_text=envelope.original_comment_text,
+        target_page=envelope.target_page,
+    )
+
+
+def _execute_update_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: UpdateDecision,
+    target_page: str,
+    current_page_content: str,
+    settings: RunnerSettings,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    if _utf8_len(decision.final_page_content) > settings.max_output_bytes:
+        return CompletionResult(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
+
+    if decision.final_page_content == current_page_content:
+        return CompletionResult(
+            STATUS_UPDATE_FAILED,
+            "NO_CONTENT_CHANGE",
+            "model output did not change the current page content",
+        )
+
+    return completion.complete_update_primary_action(
+        target_page=target_page,
+        final_page_content=decision.final_page_content,
+    )
+
+
+def _execute_rejection_primary_action(
+    *,
+    completion: RunnerCompletion,
+    decision: RejectDecision,
+    comment_identity: str,
+    original_comment_text: str,
+    target_page: str,
+) -> CompletionResult | ConfirmedPrimaryAction:
+    replacement_comment = _build_rejection_comment(
+        comment_identity=comment_identity,
+        original_comment_text=original_comment_text,
+        rejection_reason_code=decision.rejection_reason_code,
+        explanation=decision.explanation,
+    )
+    return completion.complete_rejection_primary_action(
+        target_page=target_page,
+        replacement_comment=replacement_comment,
+    )
 
 
 def _load_prompt_template() -> str:
@@ -499,13 +491,6 @@ def _emit_response(status: str, error_code: str | None = None, message: str | No
     sys.stdout.write("\n")
 
 
-def _require_string(payload: dict[str, Any], key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise RunnerContractError(f"prompt envelope field '{key}' must be a non-empty string")
-    return value
-
-
 def _utf8_len(value: str) -> int:
     return len(value.encode("utf-8"))
 
@@ -517,9 +502,9 @@ def _read_positive_int_env(name: str, default: int) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise RunnerContractError(f"{name} must be a positive integer") from exc
+        raise ValueError(f"{name} must be a positive integer") from exc
     if value <= 0:
-        raise RunnerContractError(f"{name} must be a positive integer")
+        raise ValueError(f"{name} must be a positive integer")
     return value
 
 
@@ -530,9 +515,9 @@ def _read_positive_float_env(name: str, default: float) -> float:
     try:
         value = float(raw)
     except ValueError as exc:
-        raise RunnerContractError(f"{name} must be a positive number") from exc
+        raise ValueError(f"{name} must be a positive number") from exc
     if value <= 0:
-        raise RunnerContractError(f"{name} must be a positive number")
+        raise ValueError(f"{name} must be a positive number")
     return value
 
 
@@ -540,20 +525,20 @@ def _read_non_empty_string_env(name: str, default: str | None) -> str:
     raw = os.getenv(name)
     if raw is None:
         if default is None:
-            raise RunnerContractError(f"{name} must be a non-empty string")
+            raise ValueError(f"{name} must be a non-empty string")
         return default
 
     value = raw.strip()
     if not value:
-        raise RunnerContractError(f"{name} must be a non-empty string")
+        raise ValueError(f"{name} must be a non-empty string")
     return value
 
 
-def _load_app_config_from_env():
+def _load_runner_openai_config_from_env():
     config_path_value = os.getenv("WIKI_AGENT_CONFIG_PATH")
     if not config_path_value:
         return None
-    return load_config(Path(config_path_value))
+    return load_runner_openai_config(Path(config_path_value))
 
 
 def _bounded_message(exc: Exception) -> str:
