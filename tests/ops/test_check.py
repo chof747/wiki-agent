@@ -152,4 +152,4 @@ def test_installation_shakedown_reports_actionable_runner_failure() -> None:
 
 
 def _fixture_config_path() -> Path:
-    return Path(__file__).parent / "fixtures" / "config.toml"
+    return Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"

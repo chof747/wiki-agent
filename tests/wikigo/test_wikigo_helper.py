@@ -223,7 +223,7 @@ def test_comments_create_preserves_http_failure_details(tmp_path, monkeypatch) -
 
 
 def test_load_runtime_config_reads_wikigo_section_from_app_config(monkeypatch) -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"
     monkeypatch.delenv("WIKIGO_RUNTIME_CONFIG", raising=False)
     monkeypatch.setenv("WIKI_AGENT_CONFIG_PATH", str(config_path))
 
