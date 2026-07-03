@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from wiki_agent.config import load_config
+from wiki_agent.ops.config import load_config
 from wiki_agent.scanner import Scanner, ScannerError, WikiGoCommentScanAdapter
 
 

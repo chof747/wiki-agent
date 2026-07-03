@@ -344,7 +344,7 @@ error_detail""",
             connection.commit()
             return _deserialize_job(row)
 
-    def mark_stale_processing_jobs(self, *, now: datetime | None = None, processing_timeout: timedelta) -> int:
+    def mark_stale_processing_jobs(self, *, now: datetime | None = None, processing_timeout: timedelta) -> list[CommentJob]:
         observed_now = now or datetime.now(tz=UTC)
         cutoff = observed_now - processing_timeout
         with self._connection() as connection, connection.cursor() as cursor:
@@ -353,10 +353,24 @@ error_detail""",
 completed_at = %s,
 error_detail = 'stale processing timeout'
 WHERE status = '{QUEUE_STATE_PROCESSING}' AND claimed_at < %s
-RETURNING id""",
+RETURNING
+id,
+source_system,
+comment_identity,
+target_page,
+original_comment_text,
+prompt,
+source_metadata,
+status,
+receipt_count,
+first_scanned_at,
+last_scanned_at,
+claimed_at,
+completed_at,
+error_detail""",
                 (observed_now, cutoff),
             )
-            marked = len(cursor.fetchall())
+            marked = [_deserialize_job(row) for row in cursor.fetchall()]
             connection.commit()
             return marked
 

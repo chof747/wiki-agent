@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from wiki_agent import wikigo_helper
+from wiki_agent.wikigo import helper as wikigo_helper
 
 
 def test_page_get_reads_source_endpoint_and_emits_markdown(monkeypatch, capsys) -> None:
@@ -223,7 +223,46 @@ def test_comments_create_preserves_http_failure_details(tmp_path, monkeypatch) -
 
 
 def test_load_runtime_config_reads_wikigo_section_from_app_config(monkeypatch) -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"
+    monkeypatch.delenv("WIKIGO_RUNTIME_CONFIG", raising=False)
+    monkeypatch.setenv("WIKI_AGENT_CONFIG_PATH", str(config_path))
+
+    config = wikigo_helper.load_runtime_config()
+
+    assert config == {
+        "base_url": "http://127.0.0.1:4010",
+        "username": "marvin",
+        "password": "marvin-pass",
+        "config_file": str(config_path),
+    }
+
+
+def test_load_runtime_config_ignores_invalid_unrelated_runner_openai_config(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            "bot_name = \"marvin\"\n\n"
+            "[postgres]\n"
+            'dsn = "not-a-postgres-dsn"\n\n'
+            "[wikigo]\n"
+            'base_url = "http://127.0.0.1:4010"\n'
+            'username = "marvin"\n'
+            'password = "marvin-pass"\n\n'
+            "[runner]\n"
+            'command = ["wiki-agent-runner"]\n\n'
+            "[runner.openai]\n"
+            'api_key = ""\n'
+            'model = "gpt-4.1-mini"\n'
+            "max_input_bytes = 12345\n"
+            "max_output_bytes = 23456\n"
+            "timeout_seconds = 12.5\n\n"
+            "[service]\n"
+            'log_level = "INFO"\n'
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.delenv("WIKIGO_RUNTIME_CONFIG", raising=False)
     monkeypatch.setenv("WIKI_AGENT_CONFIG_PATH", str(config_path))
 

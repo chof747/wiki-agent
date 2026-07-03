@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent import runner
 
 
@@ -85,6 +86,45 @@ def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
     assert openai_calls[0]["timeout"] == 12.5
 
 
+def test_runner_ignores_invalid_unrelated_wikigo_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            "bot_name = \"marvin\"\n\n"
+            "[postgres]\n"
+            'dsn = "not-a-postgres-dsn"\n\n'
+            "[wikigo]\n"
+            'base_url = "http://127.0.0.1:4010"\n'
+            'username = ""\n'
+            'password = "marvin-pass"\n\n'
+            "[runner]\n"
+            'command = ["wiki-agent-runner"]\n\n'
+            "[runner.openai]\n"
+            'api_key = "config-openai-key"\n'
+            'model = "gpt-4.1-mini"\n'
+            "max_input_bytes = 12345\n"
+            "max_output_bytes = 23456\n"
+            "timeout_seconds = 12.5\n\n"
+            "[service]\n"
+            'log_level = "INFO"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    result, _state_path, _helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+        extra_env={"WIKI_AGENT_CONFIG_PATH": str(config_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    openai_calls = _read_jsonl(openai_log_path)
+    assert len(openai_calls) == 1
+    assert openai_calls[0]["model"] == "gpt-4.1-mini"
+    assert openai_calls[0]["timeout"] == 12.5
+
+
 def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         (
@@ -106,7 +146,7 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
     def fake_generate_runner_decision(_prompt: str, settings: runner.RunnerSettings) -> runner.RunnerDecision:
         settings_seen["settings"] = settings
-        return runner.RunnerDecision(action="update", final_page_content="# Replacement page\n")
+        return runner.UpdateDecision(final_page_content="# Replacement page\n")
 
     monkeypatch.setattr(runner, "_read_page", lambda _target_page: "# Current page\n")
     monkeypatch.setattr(runner, "_load_prompt_template", lambda: "{{PROMPT}}")
@@ -210,6 +250,44 @@ def test_runner_rejects_unexpected_prompt_envelope_fields(tmp_path: Path) -> Non
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] is None
+
+
+def test_prompt_envelope_round_trips_between_client_and_runner_contract() -> None:
+    envelope = PromptEnvelope(
+        prompt="tighten intro",
+        original_comment_text="@marvin tighten intro",
+        target_page="/pages/example",
+        comment_identity="comment-1",
+    )
+
+    assert PromptEnvelope.from_stdin(io.StringIO(envelope.to_json())) == envelope
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("{not json}", "stdin must contain one JSON prompt envelope"),
+        (json.dumps([]), "prompt envelope must be a JSON object"),
+        (
+            json.dumps({"prompt": "x", "original_comment_text": "y", "target_page": "/p"}),
+            "prompt envelope field 'comment_identity' must be a non-empty string",
+        ),
+        (
+            json.dumps(
+                {
+                    "prompt": "x",
+                    "original_comment_text": "y",
+                    "target_page": "/p",
+                    "comment_identity": 1,
+                }
+            ),
+            "prompt envelope field 'comment_identity' must be a non-empty string",
+        ),
+    ],
+)
+def test_prompt_envelope_shared_validation_messages(payload: str, message: str) -> None:
+    with pytest.raises(PromptEnvelopeError, match=message):
+        PromptEnvelope.from_stdin(io.StringIO(payload))
 
 
 def test_runner_returns_structured_failure_for_invalid_max_input_bytes_env(tmp_path: Path) -> None:
@@ -546,11 +624,23 @@ def test_validate_model_payload_accepts_all_rejection_reason_codes(rejection_rea
         }
     )
 
-    assert decision == runner.RunnerDecision(
-        action="reject",
+    assert decision == runner.RejectDecision(
         rejection_reason_code=rejection_reason_code,
         explanation="Human-readable explanation.",
     )
+
+
+def test_validate_model_payload_returns_update_decision_variant() -> None:
+    decision = runner._validate_model_payload(
+        {
+            "action": "update",
+            "final_page_content": "# Updated\n",
+            "rejection_reason_code": None,
+            "explanation": None,
+        }
+    )
+
+    assert decision == runner.UpdateDecision(final_page_content="# Updated\n")
 
 
 def test_render_prompt_includes_all_runtime_inputs() -> None:

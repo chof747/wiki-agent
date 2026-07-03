@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from wiki_agent.wikigo_adapter import WikiGoAdapterError, extract_markdown as _extract_markdown
-from wiki_agent.wikigo_runtime import WikiGoSession, quote_page
+from wiki_agent.wikigo.adapter import WikiGoAdapterError, extract_markdown as _extract_markdown
+from wiki_agent.wikigo.runtime import WikiGoSession, quote_page
 
 
 def extract_markdown(payload: bytes) -> str:
