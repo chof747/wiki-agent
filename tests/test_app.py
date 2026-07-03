@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -174,6 +175,58 @@ def test_run_routes_stale_processing_failures_through_failure_feedback(caplog) -
 
     assert return_code == 0
     assert failure_feedback.jobs == [stale_job]
+
+
+def test_run_comment_agent_cycle_scans_and_enqueues_before_worker() -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1"), _event("comment-2")])
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    cycle = app.run_comment_agent_cycle()
+
+    assert repository.schema_ensured is True
+    assert scanner.scan_calls == 1
+    assert repository.enqueued == ["comment-1", "comment-2"]
+    assert worker.run_calls == 1
+    assert [result.job.comment_identity for result in cycle.enqueue_results] == ["comment-1", "comment-2"]
+    assert cycle.worker_run_result == WorkerRunResult(invocation=None)
+
+
+def test_run_once_dry_run_scans_once_and_emits_comment_events(capsys) -> None:  # type: ignore[no-untyped-def]
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner([_event("comment-1"), _event("comment-2")])
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 0
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "comment_events": [event.as_dict() for event in scanner._events]
+    }
+
+
+def test_run_once_dry_run_handles_scan_error_without_schema_or_worker() -> None:
+    config = load_config(_fixture_config_path())
+    repository = FakeServiceRepository(lock=FakeLockHandle())
+    worker = FakeServiceWorker([WorkerRunResult(invocation=None)])
+    scanner = FakeScanner(error=ScannerError("boom"))
+    app = WikiAgentApp(config, scanner=scanner, worker=worker, repository=repository)
+
+    return_code = app.run_once(dry_run=True)
+
+    assert return_code == 1
+    assert scanner.scan_calls == 1
+    assert repository.schema_ensured is False
+    assert repository.enqueued == []
+    assert worker.run_calls == 0
 
 
 def _fixture_config_path() -> Path:

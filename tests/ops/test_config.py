@@ -5,8 +5,12 @@ from pathlib import Path
 from wiki_agent.ops.config import load_config
 
 
+def _fixture_config_path():
+    return Path(__file__).resolve().parents[1] / "fixtures" / "config.toml"
+
+
 def test_env_override_for_postgres_dsn(monkeypatch) -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = _fixture_config_path()
     monkeypatch.setenv(
         "WIKI_AGENT_POSTGRES_DSN",
         "postgresql://override:override@localhost:5432/override_db",
@@ -18,7 +22,7 @@ def test_env_override_for_postgres_dsn(monkeypatch) -> None:
 
 
 def test_load_config_reads_wikigo_and_runner_openai_settings(monkeypatch) -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = _fixture_config_path()
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     config = load_config(config_path)
@@ -34,7 +38,7 @@ def test_load_config_reads_wikigo_and_runner_openai_settings(monkeypatch) -> Non
 
 
 def test_service_timing_defaults_are_loaded() -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = _fixture_config_path()
 
     config = load_config(config_path)
 
@@ -43,7 +47,7 @@ def test_service_timing_defaults_are_loaded() -> None:
 
 
 def test_service_timing_env_overrides_are_applied(monkeypatch) -> None:
-    config_path = Path(__file__).parent / "fixtures" / "config.toml"
+    config_path = _fixture_config_path()
     monkeypatch.setenv("WIKI_AGENT_SCAN_INTERVAL", "5")
     monkeypatch.setenv("WIKI_AGENT_STALE_PROCESSING_TIMEOUT", "11")
 
