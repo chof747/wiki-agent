@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from wiki_agent import runner_completion
+from wiki_agent.runner import completion as runner_completion
 
 
 @dataclass

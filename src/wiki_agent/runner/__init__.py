@@ -15,7 +15,7 @@ from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeE
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
 from wiki_agent.ops.config import load_runner_openai_config
-from wiki_agent.runner_completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
+from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
 from wiki_agent.wikigo.adapter import (
     WikiGoAdapterError,
     parse_helper_comments_output,
@@ -29,7 +29,7 @@ DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
-PROMPT_TEMPLATE_PACKAGE = "wiki_agent.prompts"
+PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
 REQUIRED_PROMPT_TOKENS = (
     "{{TARGET_PAGE}}",
     "{{PROMPT}}",
