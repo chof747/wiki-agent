@@ -9,7 +9,7 @@ from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
 
-from wiki_agent.config import ConfigError, load_wikigo_config
+from wiki_agent.ops.config import ConfigError, load_wikigo_config
 
 
 def load_runtime_config() -> dict[str, str]:

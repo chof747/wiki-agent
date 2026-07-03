@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
-from wiki_agent.logging import JsonFormatter
+from wiki_agent.ops.logging import JsonFormatter
 
 
 def test_json_formatter_emits_operational_metadata_fields() -> None:

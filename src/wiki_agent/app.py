@@ -8,15 +8,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from wiki_agent.comment_jobs import CommentJobRepository
-from wiki_agent.config import AppConfig
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.failure_feedback import TerminalFailureFeedback
+from wiki_agent.jobs.comment_jobs import CommentJobRepository
+from wiki_agent.ops.config import AppConfig
 from wiki_agent.scanner import Scanner, ScannerError
 from wiki_agent.worker import Worker, WorkerRunResult
 
 if TYPE_CHECKING:
-    from wiki_agent.comment_jobs import EnqueueResult
+    from wiki_agent.jobs.comment_jobs import EnqueueResult
     from wiki_agent.scanner import CommentEvent
 
 

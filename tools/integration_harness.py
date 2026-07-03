@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from wiki_agent import environment
+
+from wiki_agent.ops import environment
 from wiki_agent.wikigo_helper import (
     WikiGoSession,
     create_comment as create_wikigo_comment,

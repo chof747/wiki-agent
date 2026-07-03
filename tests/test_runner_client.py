@@ -7,9 +7,9 @@ from textwrap import dedent
 
 import pytest
 
-from wiki_agent.prompt_envelope import PromptEnvelope
-from wiki_agent.comment_jobs import CommentJob
-from wiki_agent.runner_client import RunnerClient, RunnerCommand, RunnerInvocationError
+from wiki_agent.contracts.prompt_envelope import PromptEnvelope
+from wiki_agent.contracts.runner_client import RunnerClient, RunnerCommand, RunnerInvocationError
+from wiki_agent.jobs.comment_jobs import CommentJob
 
 
 def test_runner_client_sends_prompt_envelope_and_parses_stdout(tmp_path: Path) -> None:
