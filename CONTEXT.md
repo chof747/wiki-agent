@@ -208,6 +208,14 @@ _Avoid_: model
 A source module that supports configuration, environment loading, logging, installation checks, or similar operator-facing runtime concerns.
 _Avoid_: utility
 
+**Implementation Base**:
+The branch an issue-scoped implementation branch starts from. Defaults to `main` unless a human explicitly names another base, such as a release branch.
+_Avoid_: target branch, source branch, implicit release branch
+
+**Issue-Scoped Implementation**:
+The one implementation branch and draft pull request created to deliver one approved GitHub issue.
+_Avoid_: multi-branch issue, shared implementation ticket
+
 ## Relationships
 
 - The **Comment Agent** runs as one long-running foreground process by default.
