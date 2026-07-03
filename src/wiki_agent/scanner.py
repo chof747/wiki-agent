@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from wiki_agent.ops.config import AppConfig
-from wiki_agent.wikigo_adapter import WikiGoAdapterError, normalize_scan_record, parse_scan_helper_output
+from wiki_agent.wikigo.adapter import (
+    WikiGoAdapterError,
+    normalize_scan_record,
+    parse_scan_helper_output,
+)
 
 
 class ScannerError(RuntimeError):
@@ -103,5 +107,7 @@ def _run_scan_helper() -> str:
             f"{result.returncode}: {result.stderr.strip() or 'no stderr'}"
         )
     return result.stdout
+
+
 def _is_bot_author(author: str, bot_name: str) -> bool:
     return author.lstrip("@").casefold() == bot_name.casefold()

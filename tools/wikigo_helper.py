@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from wiki_agent import wikigo_helper as _impl
+from wiki_agent.wikigo import helper as _impl
 
 
 def main(argv: list[str] | None = None) -> int:

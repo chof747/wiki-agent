@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wiki_agent.wikigo_adapter import (
+from wiki_agent.wikigo.adapter import (
     WikiGoAdapterError,
     extract_markdown,
     normalize_comments_payload,
