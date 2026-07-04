@@ -16,16 +16,21 @@ That enables the repo-owned `pre-commit` hook that blocks direct commits on `mai
 
 ## 2. Create an issue worktree
 
-Run the command from the control checkout on a clean, up-to-date `main`:
+Run the command from the control checkout on a clean working tree:
 
 ```bash
 uv run wiki-agent-worktree create <issue-number>
+uv run wiki-agent-worktree create <issue-number> --base release/<release-name>
 ```
 
 The helper:
 
 - requires the GitHub issue to be open and labeled `ready-for-agent`
+- accepts `--base main` or `--base release/<lowercase-kebab-case-release-name>`, with `main` as the default
+- rejects user-facing `origin/...` base names
+- fetches the selected base from `origin` immediately before creating the worktree
 - derives `bug/<issue-number>-<slug>` when the issue has a `bug` label, otherwise `feat/<issue-number>-<slug>`
+- creates the implementation branch from `origin/<base>`, not from the current control checkout branch
 - creates the worktree under `../wiki-agent-worktrees/wiki-agent-<issue-number>`
 - copies local `.env`, `.runtime/`, and `.vscode/` state when present
 - runs `uv sync --locked --dev` in the new worktree

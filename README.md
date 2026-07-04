@@ -160,15 +160,16 @@ Triage references:
 
 ## How To Invoke Implementation And Testing
 
-Implementation starts from a `ready-for-agent` issue on a clean `main` checkout.
+Implementation starts from a `ready-for-agent` issue on a clean control checkout.
 
 Create the issue worktree:
 
 ```bash
 uv run wiki-agent-worktree create <issue-number>
+uv run wiki-agent-worktree create <issue-number> --base release/<release-name>
 ```
 
-That creates an issue branch and worktree, installs dependencies, and prepares the local runtime state used by the repo workflow.
+That creates an issue branch and worktree from `origin/main` by default, or from an explicit `origin/release/<release-name>` base when `--base` is provided. It also installs dependencies and prepares the local runtime state used by the repo workflow.
 
 Inside the issue worktree, use the default verification baseline:
 
