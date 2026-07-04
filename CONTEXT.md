@@ -212,13 +212,27 @@ _Avoid_: utility
 The branch an issue-scoped implementation branch starts from. Defaults to `main` unless a human explicitly names another base, such as a release branch.
 _Avoid_: target branch, source branch, implicit release branch
 
+**Release Branch**:
+A remote branch named `release/<release-name>` where `<release-name>` is a stable lowercase kebab-case release label. A **Release Branch** may be selected as a non-default **Implementation Base**.
+_Avoid_: release version branch, stable branch, hotfix branch
+
 **Issue-Scoped Implementation**:
 The one implementation branch and draft pull request created to deliver one approved GitHub issue.
 _Avoid_: multi-branch issue, shared implementation ticket
 
+**Control Checkout**:
+The clean repository checkout from which an issue-scoped worktree is created. Its current branch is not the **Implementation Base**.
+_Avoid_: base checkout, main checkout
+
 ## Relationships
 
 - The **Comment Agent** runs as one long-running foreground process by default.
+- An **Issue-Scoped Implementation** has exactly one implementation branch and one draft pull request.
+- An **Issue-Scoped Implementation** starts from exactly one **Implementation Base**.
+- The default **Implementation Base** is `main`.
+- A **Release Branch** may be used as the **Implementation Base** only when a human explicitly names it.
+- The selected **Implementation Base** is an invocation-time implementation choice, not GitHub issue metadata.
+- A **Control Checkout** must be clean before creating an issue-scoped worktree, but its current branch is not the **Implementation Base**.
 - The **Comment Agent** contains a scheduled **Scanner** and a strictly one-at-a-time **Worker**.
 - The **Scanner** uses the installed Wiki-Go helper command boundary, including `wikigo-comments-scan`.
 - The **Scanner** discovers comments across all pages and keeps only comments that start with `@<BOT_NAME>`.
