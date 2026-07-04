@@ -23,4 +23,5 @@ For any repo change, apply the principles and follow `docs/agents/strategic-prog
 
 ### Implementation workflow
 
-For any repo change, follow `docs/agents/implementation-workflow.md`.
+For any repo change, start with `docs/agents/implementation-workflow.md`.
+It is the canonical router for intake, issue start, implementation, verification, publishing, CI fixes, and PR review follow-up.
