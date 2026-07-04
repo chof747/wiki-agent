@@ -17,6 +17,7 @@ from wiki_agent.ops import environment
 UV_CACHE_DIR = "/private/tmp/uv-cache"
 LOCAL_STATE_NAMES = (".env", ".runtime", ".vscode")
 INTEGRATION_HARNESS_CONTAINER_NAME_PREFIX = "wiki-agent-integration-harness"
+IMPLEMENTATION_BASE_PATTERN = re.compile(r"^(main|release/[a-z0-9]+(?:-[a-z0-9]+)*)$")
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     environment.load_repo_environment(repo_root=repo_root)
 
     if args.command == "create":
-        result = create_worktree(args.issue_number, repo_root=repo_root)
+        result = create_worktree(args.issue_number, repo_root=repo_root, base=args.base)
         print(f"Created {result.branch} at {result.path}")
         return 0
 
@@ -51,15 +52,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     create_parser = subparsers.add_parser("create")
     create_parser.add_argument("issue_number", type=int)
+    create_parser.add_argument("--base", default="main")
 
     delete_parser = subparsers.add_parser("delete")
     delete_parser.add_argument("issue_number", type=int)
     return parser
 
 
-def create_worktree(issue_number: int, *, repo_root: Path | None = None) -> WorktreeResult:
+def create_worktree(
+    issue_number: int, *, repo_root: Path | None = None, base: str = "main"
+) -> WorktreeResult:
     control_root = repo_root or resolve_repo_root()
+    implementation_base = normalize_implementation_base(base)
     ensure_control_checkout_ready(control_root)
+    fetch_implementation_base(control_root, implementation_base)
     issue = read_issue(issue_number, cwd=control_root)
     ensure_issue_ready(issue_number, issue)
     branch = canonical_branch_name(issue_number, issue)
@@ -68,7 +74,10 @@ def create_worktree(issue_number: int, *, repo_root: Path | None = None) -> Work
         raise SystemExit(f"worktree already exists at {path}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    run_command(["git", "worktree", "add", "-b", branch, str(path), "HEAD"], cwd=control_root)
+    run_command(
+        ["git", "worktree", "add", "-b", branch, str(path), f"origin/{implementation_base}"],
+        cwd=control_root,
+    )
     copy_local_state(control_root, path)
     run_command(["uv", "sync", "--locked", "--dev"], cwd=path)
     run_command(
@@ -105,15 +114,23 @@ def ensure_control_checkout_ready(repo_root: Path) -> None:
     if status.strip():
         raise SystemExit("control checkout must be clean before creating an issue worktree")
 
-    branch = run_command(["git", "branch", "--show-current"], cwd=repo_root).strip()
-    if branch != "main":
-        raise SystemExit("control checkout must be on main")
+    return None
 
-    run_command(["git", "fetch", "origin", "main"], cwd=repo_root)
-    head = run_command(["git", "rev-parse", "HEAD"], cwd=repo_root).strip()
-    origin_main = run_command(["git", "rev-parse", "refs/remotes/origin/main"], cwd=repo_root).strip()
-    if head != origin_main:
-        raise SystemExit("control checkout main must be up to date with origin/main")
+
+def normalize_implementation_base(base: str) -> str:
+    if IMPLEMENTATION_BASE_PATTERN.fullmatch(base):
+        return base
+
+    raise SystemExit(
+        "base must be 'main' or a release branch named 'release/<lowercase-kebab-case>'"
+    )
+
+
+def fetch_implementation_base(repo_root: Path, base: str) -> None:
+    try:
+        run_command(["git", "fetch", "origin", base], cwd=repo_root)
+    except SystemExit as exc:
+        raise SystemExit(f"failed to fetch origin/{base}: {exc}") from exc
 
 
 def read_issue(issue_number: int, *, cwd: Path) -> dict[str, object]:
