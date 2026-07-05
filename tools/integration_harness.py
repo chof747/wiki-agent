@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("up")
     subparsers.add_parser("reset")
     subparsers.add_parser("test")
+    subparsers.add_parser("ci-test")
     subparsers.add_parser("down")
     run_once_parser = subparsers.add_parser("run-once")
     run_once_parser.add_argument("--dry-run", action="store_true")
@@ -79,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
         up()
         reset()
         run_test()
+        return 0
+    if args.command == "ci-test":
+        run_ci_test()
         return 0
     if args.command == "down":
         down()
@@ -108,9 +112,9 @@ def up() -> None:
     if not container_exists():
         if not (DATA_ROOT / "config.yaml").exists():
             bootstrap_default_data_dir(state)
-        start_container(state)
+        state = start_container(state)
     elif not container_running():
-        start_container(state)
+        state = start_container(state)
 
     state = sync_state_with_container(state)
     ensure_runtime_files(state)
@@ -119,7 +123,7 @@ def up() -> None:
         down()
         wipe_data_root()
         bootstrap_default_data_dir(state)
-        start_container(state)
+        state = start_container(state)
         state = sync_state_with_container(state)
         ensure_runtime_files(state)
         wait_for_http(state["base_url"])
@@ -177,6 +181,15 @@ def run_test() -> None:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=os.sys.stderr)
+
+
+def run_ci_test() -> None:
+    up()
+    reset()
+    try:
+        run_test()
+    finally:
+        down()
 
 
 def down() -> None:
@@ -369,7 +382,7 @@ def ensure_runtime_database() -> None:
 
 
 def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
-    start_container(state)
+    state = start_container(state)
     wait_for_http(state["base_url"])
     run_docker(["stop", container_name()])
 
@@ -379,27 +392,52 @@ def bootstrap_default_data_dir(state: dict[str, Any]) -> None:
     config_path.write_text(text, encoding="utf-8")
 
 
-def start_container(state: dict[str, Any]) -> None:
+def start_container(state: dict[str, Any]) -> dict[str, Any]:
     if container_exists():
         if not container_running():
-            run_docker(["start", container_name()])
-        return
+            try:
+                run_docker(["start", container_name()])
+            except SystemExit as exc:
+                if not _is_port_allocation_error(str(exc)):
+                    raise
+                run_docker(["rm", "-f", container_name()])
+                state = _allocate_replacement_state()
+                return start_container(state)
+        return state
     user = f"{os.getuid()}:{os.getgid()}"
-    run_docker(
-        [
-            "run",
-            "-d",
-            "--name",
-            container_name(),
-            "--user",
-            user,
-            "-p",
-            f"{state['port']}:8080",
-            "-v",
-            f"{DATA_ROOT}:/wiki/data",
-            WIKIGO_IMAGE,
-        ]
-    )
+    try:
+        run_docker(
+            [
+                "run",
+                "-d",
+                "--name",
+                container_name(),
+                "--user",
+                user,
+                "-p",
+                f"{state['port']}:8080",
+                "-v",
+                f"{DATA_ROOT}:/wiki/data",
+                WIKIGO_IMAGE,
+            ]
+        )
+    except SystemExit as exc:
+        if not _is_port_allocation_error(str(exc)):
+            raise
+        state = _allocate_replacement_state()
+        return start_container(state)
+    return state
+
+
+def _allocate_replacement_state() -> dict[str, Any]:
+    port = allocate_port()
+    state = {"base_url": f"http://127.0.0.1:{port}", "port": port}
+    save_state(state)
+    return state
+
+
+def _is_port_allocation_error(message: str) -> bool:
+    return "port is already allocated" in message.lower()
 
 
 def write_shims() -> None:
