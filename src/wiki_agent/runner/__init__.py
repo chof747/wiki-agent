@@ -15,7 +15,16 @@ from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeE
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
 from wiki_agent.ops.config import load_runner_openai_config
+from wiki_agent.runner.capabilities.orchestration import CapabilityContext, CapabilityOrchestrator, CapabilityResult
 from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
+from wiki_agent.runner.model_transport import (
+    ModelTransport,
+    ModelTransportError,
+    ModelTransportRequest,
+    OpenAIResponsesTransport,
+    parse_json_output,
+)
+from wiki_agent.runner.page_composition import PageComposer, PageCompositionInput
 from wiki_agent.wikigo.adapter import (
     WikiGoAdapterError,
     parse_helper_comments_output,
@@ -111,6 +120,8 @@ class RunnerSettings:
 def main(argv: list[str] | None = None) -> int:
     del argv
     environment.load_repo_environment()
+    capability_orchestrator = CapabilityOrchestrator()
+    page_composer = PageComposer()
     completion = RunnerCompletion(
         read_page=_read_page,
         save_page=_save_page,
@@ -131,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "RUNNER_CONFIG_INVALID", str(exc))
         return 0
 
+    transport = OpenAIResponsesTransport(
+        api_key=settings.api_key,
+        timeout_seconds=settings.model_timeout_seconds,
+    )
+
     try:
         current_page_content = _read_page(envelope.target_page)
     except HelperCommandError as exc:
@@ -138,12 +154,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
+        capability_result = capability_orchestrator.prepare(
+            CapabilityContext(
+                prompt=envelope.prompt,
+                original_comment_text=envelope.original_comment_text,
+                target_page=envelope.target_page,
+                current_page_content=current_page_content,
+            )
+        )
         rendered_prompt = render_prompt(
             template=_load_prompt_template(),
             prompt=envelope.prompt,
             original_comment_text=envelope.original_comment_text,
             target_page=envelope.target_page,
             current_page_content=current_page_content,
+            supplemental_sections=capability_result.prompt_sections,
         )
     except PromptTemplateError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "PROMPT_TEMPLATE_INVALID", str(exc))
@@ -154,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        decision = _generate_runner_decision(rendered_prompt, settings)
+        decision = _generate_runner_decision(rendered_prompt, settings, transport=transport)
     except ModelOutputError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_OUTPUT_INVALID", str(exc))
         return 0
@@ -167,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         decision=decision,
         envelope=envelope,
         current_page_content=current_page_content,
+        capability_result=capability_result,
+        page_composer=page_composer,
         settings=settings,
     )
 
@@ -181,6 +208,7 @@ def render_prompt(
     original_comment_text: str,
     target_page: str,
     current_page_content: str,
+    supplemental_sections: tuple[str, ...] = (),
 ) -> str:
     missing = [token for token in REQUIRED_PROMPT_TOKENS if token not in template]
     if missing:
@@ -194,40 +222,34 @@ def render_prompt(
         "{{CURRENT_PAGE_CONTENT}}": current_page_content,
     }
     pattern = re.compile("|".join(re.escape(token) for token in REQUIRED_PROMPT_TOKENS))
-    return pattern.sub(lambda match: replacements[match.group(0)], template)
+    rendered = pattern.sub(lambda match: replacements[match.group(0)], template)
+    if not supplemental_sections:
+        return rendered
+
+    return rendered + "\n\n" + "\n\n".join(supplemental_sections)
 
 
-def _generate_runner_decision(rendered_prompt: str, settings: RunnerSettings) -> RunnerDecision:
-    from openai import OpenAI
-
-    client = OpenAI(api_key=settings.api_key, timeout=settings.model_timeout_seconds)
-    response = client.responses.create(
-        model=settings.openai_model,
-        input=[
-            {
-                "role": "system",
-                "content": (
+def _generate_runner_decision(
+    rendered_prompt: str,
+    settings: RunnerSettings,
+    *,
+    transport: ModelTransport,
+) -> RunnerDecision:
+    try:
+        response = transport.generate(
+            ModelTransportRequest(
+                model=settings.openai_model,
+                system_instruction=(
                     "You update exactly one attached wiki page. "
                     "Return only structured JSON matching the provided schema."
                 ),
-            },
-            {"role": "user", "content": rendered_prompt},
-        ],
-        text={"format": _response_format_schema()},
-    )
-
-    status = getattr(response, "status", None)
-    if status not in {None, "completed"}:
-        raise ModelOutputError("model response did not complete successfully")
-
-    output_text = getattr(response, "output_text", None)
-    if not isinstance(output_text, str) or not output_text:
-        raise ModelOutputError("model response did not include structured output text")
-
-    try:
-        payload = json.loads(output_text)
-    except json.JSONDecodeError as exc:
-        raise ModelOutputError("model output was not valid JSON") from exc
+                user_prompt=rendered_prompt,
+                response_format=_response_format_schema(),
+            )
+        )
+        payload = parse_json_output(response.output_text)
+    except ModelTransportError as exc:
+        raise ModelOutputError(str(exc)) from exc
 
     return _validate_model_payload(payload)
 
@@ -291,6 +313,8 @@ def _complete_runner_decision(
     decision: RunnerDecision,
     envelope: PromptEnvelope,
     current_page_content: str,
+    capability_result: CapabilityResult,
+    page_composer: PageComposer,
     settings: RunnerSettings,
 ) -> CompletionResult:
     primary_action = _execute_primary_action(
@@ -298,6 +322,8 @@ def _complete_runner_decision(
         decision=decision,
         envelope=envelope,
         current_page_content=current_page_content,
+        capability_result=capability_result,
+        page_composer=page_composer,
         settings=settings,
     )
     if isinstance(primary_action, CompletionResult):
@@ -316,6 +342,8 @@ def _execute_primary_action(
     decision: RunnerDecision,
     envelope: PromptEnvelope,
     current_page_content: str,
+    capability_result: CapabilityResult,
+    page_composer: PageComposer,
     settings: RunnerSettings,
 ) -> CompletionResult | ConfirmedPrimaryAction:
     if isinstance(decision, UpdateDecision):
@@ -324,6 +352,8 @@ def _execute_primary_action(
             decision=decision,
             target_page=envelope.target_page,
             current_page_content=current_page_content,
+            capability_result=capability_result,
+            page_composer=page_composer,
             settings=settings,
         )
 
@@ -342,12 +372,22 @@ def _execute_update_primary_action(
     decision: UpdateDecision,
     target_page: str,
     current_page_content: str,
+    capability_result: CapabilityResult,
+    page_composer: PageComposer,
     settings: RunnerSettings,
 ) -> CompletionResult | ConfirmedPrimaryAction:
-    if _utf8_len(decision.final_page_content) > settings.max_output_bytes:
+    final_page_content = page_composer.compose_update(
+        PageCompositionInput(
+            current_page_content=current_page_content,
+            model_page_content=decision.final_page_content,
+            capability_result=capability_result,
+        )
+    ).final_page_content
+
+    if _utf8_len(final_page_content) > settings.max_output_bytes:
         return CompletionResult(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
 
-    if decision.final_page_content == current_page_content:
+    if final_page_content == current_page_content:
         return CompletionResult(
             STATUS_UPDATE_FAILED,
             "NO_CONTENT_CHANGE",
@@ -356,7 +396,7 @@ def _execute_update_primary_action(
 
     return completion.complete_update_primary_action(
         target_page=target_page,
-        final_page_content=decision.final_page_content,
+        final_page_content=final_page_content,
     )
 
 

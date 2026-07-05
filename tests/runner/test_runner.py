@@ -144,7 +144,13 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
-    def fake_generate_runner_decision(_prompt: str, settings: runner.RunnerSettings) -> runner.RunnerDecision:
+    def fake_generate_runner_decision(
+        _prompt: str,
+        settings: runner.RunnerSettings,
+        *,
+        transport: object,
+    ) -> runner.RunnerDecision:
+        del transport
         settings_seen["settings"] = settings
         return runner.UpdateDecision(final_page_content="# Replacement page\n")
 
