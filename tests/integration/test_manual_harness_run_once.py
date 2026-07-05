@@ -17,6 +17,14 @@ UPDATED_MARKDOWN = "# Eligible Fixture\n\nUpdated by manual harness test."
 REJECTION_COMMENT_TEXT = "@marvin update /other-page too"
 REJECTION_REASON_CODE = "CROSS_PAGE_REQUEST"
 REJECTION_EXPLANATION = "This agent can only update the page where the comment was posted."
+WEB_RESEARCH_COMMENT_TEXT = "@marvin update this page with the current public release details using web research"
+WEB_RESEARCH_UPDATED_MARKDOWN = (
+    "# Eligible Fixture\n\n"
+    "Current public release details updated from web research.\n\n"
+    "## References\n"
+    "- https://example.com/releases/latest\n"
+    "- https://docs.example.com/releases\n"
+)
 
 
 @pytest.mark.integration
@@ -138,6 +146,79 @@ def test_run_once_creates_visible_rejection_comment_and_finalizes_job(tmp_path: 
         _reset_harness(env=env)
 
 
+@pytest.mark.integration
+def test_run_once_executes_web_research_update_with_cited_references(tmp_path: Path) -> None:
+    script = shutil.which("wiki-agent")
+    assert script is not None
+
+    config_path = _require_path_env("WIKI_AGENT_INTEGRATION_CONFIG")
+    runtime_root = config_path.parent
+    admin_config_path = runtime_root / "wikigo-admin-config.json"
+    bot_config_path = runtime_root / "wikigo-bot-config.json"
+
+    env = os.environ.copy()
+    env["UV_CACHE_DIR"] = env.get("UV_CACHE_DIR", "/private/tmp/uv-cache")
+    _write_fake_openai_package(
+        tmp_path / "openai",
+        {
+            "model_output": {"final_page_content": "# Eligible Fixture\n\nCurrent public release details updated from web research.\n"},
+            "web_search_sources": [
+                "https://example.com/releases/latest",
+                "https://docs.example.com/releases",
+            ],
+        },
+    )
+
+    try:
+        _delete_all_comments(PAGE_PATH, runtime_config=admin_config_path, env=env)
+        source_comment = _post_comment(
+            PAGE_PATH,
+            WEB_RESEARCH_COMMENT_TEXT,
+            runtime_config=admin_config_path,
+            env=env,
+            tmp_path=tmp_path,
+        )
+        source_comment_id = str(source_comment["id"])
+
+        run_env = _helper_env(runtime_config=bot_config_path, env=env)
+        run_env["OPENAI_API_KEY"] = "test-openai-key"
+        run_env["PYTHONPATH"] = f"{tmp_path}{os.pathsep}{run_env.get('PYTHONPATH', '')}"
+        result = subprocess.run(
+            [script, "run-once", "--config", str(config_path)],
+            cwd=REPO_ROOT,
+            env=run_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        stderr_events = [json.loads(line) for line in result.stderr.splitlines()]
+        assert "worker.runner_failed" not in [event["event"] for event in stderr_events]
+        finalized_event = next(event for event in stderr_events if event["event"] == "worker.job_finalized")
+        assert finalized_event["status"] == "SUCCESS"
+
+        page = _run_helper(["wikigo-helper", "page", "get", PAGE_PATH], runtime_config=bot_config_path, env=env)
+        assert json.loads(page)["markdown"] == WEB_RESEARCH_UPDATED_MARKDOWN
+
+        comments = json.loads(
+            _run_helper(["wikigo-comments", "list", PAGE_PATH], runtime_config=admin_config_path, env=env)
+        )
+        assert comments == []
+
+        with psycopg.connect(_require_env("WIKI_AGENT_INTEGRATION_RUNTIME_DSN")) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status FROM comment_jobs WHERE comment_identity = %s",
+                    (source_comment_id,),
+                )
+                row = cursor.fetchone()
+
+        assert row == ("SUCCESS",)
+    finally:
+        _reset_harness(env=env)
+
+
 def _delete_all_comments(page_path: str, *, runtime_config: Path, env: dict[str, str]) -> None:
     comments = json.loads(_run_helper(["wikigo-comments", "list", page_path], runtime_config=runtime_config, env=env))
     for comment in comments:
@@ -238,7 +319,17 @@ def _write_fake_openai_package(path: Path, output_payload: dict[str, object]) ->
             "class _Responses:\n"
             "    def create(self, **kwargs):\n"
             "        del kwargs\n"
-            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(OUTPUT_PAYLOAD))\n"
+            "        payload = OUTPUT_PAYLOAD\n"
+            "        surfaced_sources = []\n"
+            "        if isinstance(payload, dict) and 'model_output' in payload:\n"
+            "            surfaced_sources = payload.get('web_search_sources', [])\n"
+            "            payload = payload['model_output']\n"
+            "        if isinstance(payload, dict) and 'action' not in payload and set(payload.keys()) == {'final_page_content'}:\n"
+            "            payload = {'action': 'update', 'final_page_content': payload['final_page_content'], 'rejection_reason_code': None, 'explanation': None}\n"
+            "        output = []\n"
+            "        if surfaced_sources:\n"
+            "            output.append(types.SimpleNamespace(type='web_search_call', action=types.SimpleNamespace(type='search', sources=[types.SimpleNamespace(type='url', url=url) for url in surfaced_sources])))\n"
+            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload), output=output)\n"
         ),
         encoding="utf-8",
     )

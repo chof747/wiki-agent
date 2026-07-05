@@ -36,6 +36,7 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     openai_calls = _read_jsonl(openai_log_path)
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == runner.DEFAULT_OPENAI_MODEL
+    assert openai_calls[0]["tools"] == [{"type": "web_search"}]
     rendered_prompt = openai_calls[0]["input"][1]["content"]
     assert "Target page: /pages/example" in rendered_prompt
     assert "Stripped prompt:\n# Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
@@ -45,6 +46,42 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] == "# Replacement page\n\nUpdated content.\n"
     assert state["deleted_comment_ids"] == ["comment-1"]
+
+
+def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+            "web_search_sources": [
+                "https://example.com/release-notes",
+                "https://docs.example.com/product",
+            ],
+        },
+        original_comment_text="@marvin update this page with current public release details",
+        prompt="update this page with current public release details",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+    assert _read_jsonl(openai_log_path)[0]["tools"] == [{"type": "web_search"}]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Updated content.\n\n"
+        "## References\n"
+        "- https://example.com/release-notes\n"
+        "- https://docs.example.com/product\n"
+    )
 
 
 def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
@@ -816,6 +853,10 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "        if isinstance(OUTPUT_PAYLOAD, dict) and 'raise_error' in OUTPUT_PAYLOAD:\n"
             "            raise RuntimeError(OUTPUT_PAYLOAD['raise_error'])\n"
             "        payload = OUTPUT_PAYLOAD\n"
+            "        surfaced_sources = []\n"
+            "        if isinstance(payload, dict) and 'model_output' in payload:\n"
+            "            surfaced_sources = payload.get('web_search_sources', [])\n"
+            "            payload = payload['model_output']\n"
             "        if isinstance(payload, dict) and 'action' not in payload and set(payload.keys()) == {'final_page_content'}:\n"
             "            payload = {\n"
             "                'action': 'update',\n"
@@ -823,7 +864,10 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "                'rejection_reason_code': None,\n"
             "                'explanation': None,\n"
             "            }\n"
-            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload))\n"
+            "        output = []\n"
+            "        if surfaced_sources:\n"
+            "            output.append(types.SimpleNamespace(type='web_search_call', action=types.SimpleNamespace(type='search', sources=[types.SimpleNamespace(type='url', url=url) for url in surfaced_sources])))\n"
+            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload), output=output)\n"
         ),
         encoding="utf-8",
     )

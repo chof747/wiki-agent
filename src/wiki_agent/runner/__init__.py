@@ -37,6 +37,7 @@ DEFAULT_MAX_INPUT_BYTES = 32 * 1024
 DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
+HOSTED_WEB_SEARCH_TOOL = ({"type": "web_search"},)
 PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
 PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
 REQUIRED_PROMPT_TOKENS = (
@@ -179,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        decision = _generate_runner_decision(rendered_prompt, settings, transport=transport)
+        decision, transport_capability_result = _generate_runner_decision(rendered_prompt, settings, transport=transport)
     except ModelOutputError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_OUTPUT_INVALID", str(exc))
         return 0
@@ -192,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         decision=decision,
         envelope=envelope,
         current_page_content=current_page_content,
-        capability_result=capability_result,
+        capability_result=CapabilityResult(
+            prompt_sections=capability_result.prompt_sections,
+            artifacts=capability_result.artifacts + transport_capability_result.artifacts,
+        ),
         page_composer=page_composer,
         settings=settings,
     )
@@ -245,13 +249,14 @@ def _generate_runner_decision(
                 ),
                 user_prompt=rendered_prompt,
                 response_format=_response_format_schema(),
+                tools=HOSTED_WEB_SEARCH_TOOL,
             )
         )
         payload = parse_json_output(response.output_text)
     except ModelTransportError as exc:
         raise ModelOutputError(str(exc)) from exc
 
-    return _validate_model_payload(payload)
+    return _validate_model_payload(payload), CapabilityResult(artifacts=response.web_research_outputs)
 
 
 def _response_format_schema() -> dict[str, Any]:

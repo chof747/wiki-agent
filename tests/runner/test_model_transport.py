@@ -36,6 +36,7 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
             system_instruction="system instruction",
             user_prompt="user prompt",
             response_format={"type": "json_schema"},
+            tools=({"type": "web_search"},),
         )
     )
 
@@ -49,7 +50,53 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
             {"role": "user", "content": "user prompt"},
         ],
         "text": {"format": {"type": "json_schema"}},
+        "tools": [{"type": "web_search"}],
     }
+
+
+def test_openai_responses_transport_extracts_surfaced_web_search_urls() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps({"action": "update"}),
+                output=[
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="search",
+                            sources=[
+                                SimpleNamespace(type="url", url="https://example.com/1"),
+                                SimpleNamespace(type="url", url="https://example.com/1"),
+                                SimpleNamespace(type="url", url="https://example.com/2"),
+                            ],
+                        ),
+                    )
+                ],
+            )
+
+    transport = OpenAIResponsesTransport(
+        api_key="test-key",
+        timeout_seconds=12.5,
+        client_factory=lambda **_kwargs: FakeClient(),
+    )
+
+    response = transport.generate(
+        ModelTransportRequest(
+            model="gpt-test",
+            system_instruction="system instruction",
+            user_prompt="user prompt",
+            response_format={"type": "json_schema"},
+        )
+    )
+
+    assert [item.url for item in response.web_research_outputs] == [
+        "https://example.com/1",
+        "https://example.com/2",
+    ]
 
 
 def test_openai_responses_transport_rejects_incomplete_status() -> None:

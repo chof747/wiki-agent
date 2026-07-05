@@ -10,10 +10,65 @@ def test_page_composer_preserves_current_passthrough_update_behavior() -> None:
         PageCompositionInput(
             current_page_content="# Current\n",
             model_page_content="# Updated\n",
-            capability_result=CapabilityResult(
-                artifacts=(WebResearchOutput(title="Source", url="https://example.com"),)
-            ),
+            capability_result=CapabilityResult(),
         )
     )
 
     assert composition == PageComposition(final_page_content="# Updated\n")
+
+
+def test_page_composer_appends_trailing_references_for_web_research_outputs() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content="# Current\n",
+            model_page_content="# Updated\n\nNew facts.\n",
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Source 1", url="https://example.com/1"),
+                    WebResearchOutput(title="Source 2", url="https://example.com/2"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "New facts.\n\n"
+            "## References\n"
+            "- https://example.com/1\n"
+            "- https://example.com/2\n"
+        )
+    )
+
+
+def test_page_composer_merges_existing_references_with_web_research_outputs() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content="# Current\n",
+            model_page_content=(
+                "# Updated\n\n"
+                "New facts.\n\n"
+                "## References\n"
+                "- https://example.com/existing\n"
+                "- https://example.com/1\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Source 1", url="https://example.com/1"),
+                    WebResearchOutput(title="Source 2", url="https://example.com/2"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "New facts.\n\n"
+            "## References\n"
+            "- https://example.com/existing\n"
+            "- https://example.com/1\n"
+            "- https://example.com/2\n"
+        )
+    )
