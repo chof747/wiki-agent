@@ -394,6 +394,25 @@ def test_wait_for_http_includes_container_diagnostics_on_timeout(monkeypatch) ->
     assert "Wiki-Go container logs:\nboot failed" in message
 
 
+def test_main_ci_test_runs_down_when_pytest_fails(monkeypatch) -> None:
+    observed: list[str] = []
+
+    monkeypatch.setattr(integration_harness, "up", lambda: observed.append("up"))
+    monkeypatch.setattr(integration_harness, "reset", lambda: observed.append("reset"))
+
+    def fail_run_test() -> None:
+        observed.append("test")
+        raise SystemExit("integration pytest run failed")
+
+    monkeypatch.setattr(integration_harness, "run_test", fail_run_test)
+    monkeypatch.setattr(integration_harness, "down", lambda: observed.append("down"))
+
+    with pytest.raises(SystemExit, match="integration pytest run failed"):
+        integration_harness.main(["ci-test"])
+
+    assert observed == ["up", "reset", "test", "down"]
+
+
 def test_start_container_runs_wikigo_as_host_user(monkeypatch) -> None:
     captured: list[str] = []
 
@@ -412,6 +431,82 @@ def test_start_container_runs_wikigo_as_host_user(monkeypatch) -> None:
         "--user",
         "1001:1002",
     ]
+
+
+def test_start_container_recovers_when_saved_port_is_already_allocated(monkeypatch) -> None:
+    saved_states: list[dict[str, int | str]] = []
+    docker_calls: list[list[str]] = []
+
+    monkeypatch.setattr(integration_harness, "container_exists", lambda: False)
+    monkeypatch.setattr(integration_harness.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(integration_harness.os, "getgid", lambda: 1002)
+    monkeypatch.setattr(integration_harness, "allocate_port", lambda: 4020)
+    monkeypatch.setattr(
+        integration_harness,
+        "save_state",
+        lambda state: saved_states.append(dict(state)),
+    )
+
+    def fake_run_docker(args: list[str]) -> str:
+        docker_calls.append(list(args))
+        if args[:2] == ["run", "-d"] and "4010:8080" in args:
+            raise SystemExit(
+                "docker: Error response from daemon: failed to set up container networking: "
+                "Bind for 0.0.0.0:4010 failed: port is already allocated"
+            )
+        return ""
+
+    monkeypatch.setattr(integration_harness, "run_docker", fake_run_docker)
+
+    state = integration_harness.start_container({"base_url": "http://127.0.0.1:4010", "port": 4010})
+
+    assert state == {"base_url": "http://127.0.0.1:4020", "port": 4020}
+    assert saved_states == [{"base_url": "http://127.0.0.1:4020", "port": 4020}]
+    assert [call[0] for call in docker_calls] == ["run", "run"]
+    assert "4010:8080" in docker_calls[0]
+    assert "4020:8080" in docker_calls[1]
+
+
+def test_start_container_recreates_stopped_container_when_saved_port_is_stale(monkeypatch) -> None:
+    saved_states: list[dict[str, int | str]] = []
+    docker_calls: list[list[str]] = []
+    container_exists_state = {"value": True}
+
+    monkeypatch.setattr(
+        integration_harness,
+        "container_exists",
+        lambda: container_exists_state["value"],
+    )
+    monkeypatch.setattr(integration_harness, "container_running", lambda: False)
+    monkeypatch.setattr(integration_harness, "allocate_port", lambda: 4021)
+    monkeypatch.setattr(
+        integration_harness,
+        "save_state",
+        lambda state: saved_states.append(dict(state)),
+    )
+    monkeypatch.setattr(integration_harness.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(integration_harness.os, "getgid", lambda: 1002)
+
+    def fake_run_docker(args: list[str]) -> str:
+        docker_calls.append(list(args))
+        if args[:2] == ["start", integration_harness.container_name()]:
+            raise SystemExit(
+                "docker: Error response from daemon: failed to set up container networking: "
+                "Bind for 0.0.0.0:4010 failed: port is already allocated"
+            )
+        if args[:3] == ["rm", "-f", integration_harness.container_name()]:
+            container_exists_state["value"] = False
+        return ""
+
+    monkeypatch.setattr(integration_harness, "run_docker", fake_run_docker)
+
+    state = integration_harness.start_container({"base_url": "http://127.0.0.1:4010", "port": 4010})
+
+    assert state == {"base_url": "http://127.0.0.1:4021", "port": 4021}
+    assert saved_states == [{"base_url": "http://127.0.0.1:4021", "port": 4021}]
+    assert docker_calls[0] == ["start", integration_harness.container_name()]
+    assert docker_calls[1] == ["rm", "-f", integration_harness.container_name()]
+    assert "4021:8080" in docker_calls[2]
 
 
 def test_container_name_is_scoped_to_repo_root(monkeypatch, tmp_path: Path) -> None:

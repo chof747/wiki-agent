@@ -71,8 +71,10 @@ def test_ci_workflow_runs_for_prs_but_not_main_pushes() -> None:
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
     assert "Compute docs-only change classification" in workflow
-    assert "No-op for docs-only changes" in workflow
     assert "from-github-event" in workflow
+    assert "if: needs.changes.outputs.docs_only != 'true'" in workflow
+    assert "Docs-only change sets skip the whole job" in workflow
+    assert "uv run wiki-agent-integration ci-test" in workflow
 
 
 def test_docker_operator_doc_covers_runtime_usage() -> None:
