@@ -42,7 +42,7 @@ def test_page_composer_appends_trailing_references_for_web_research_outputs() ->
     )
 
 
-def test_page_composer_merges_existing_references_with_web_research_outputs() -> None:
+def test_page_composer_rebuilds_existing_references_from_surfaced_web_research_outputs() -> None:
     composition = PageComposer().compose_update(
         PageCompositionInput(
             current_page_content="# Current\n",
@@ -67,7 +67,6 @@ def test_page_composer_merges_existing_references_with_web_research_outputs() ->
             "# Updated\n\n"
             "New facts.\n\n"
             "## References\n"
-            "- https://example.com/existing\n"
             "- https://example.com/1\n"
             "- https://example.com/2\n"
         )

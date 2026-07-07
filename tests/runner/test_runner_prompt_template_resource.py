@@ -9,3 +9,4 @@ def test_load_prompt_template_reads_packaged_markdown_resource() -> None:
     assert "Target page: {{TARGET_PAGE}}" in template
     assert "Stripped prompt:" in template
     assert "{{CURRENT_PAGE_CONTENT}}" in template
+    assert "write concise search queries tailored to the stripped prompt and target topic" in template

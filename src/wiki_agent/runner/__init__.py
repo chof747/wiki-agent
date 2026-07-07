@@ -16,6 +16,7 @@ from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
 from wiki_agent.ops.config import load_runner_openai_config
 from wiki_agent.runner.capabilities.orchestration import CapabilityContext, CapabilityOrchestrator, CapabilityResult
+from wiki_agent.runner.capabilities.web_research import WebResearchOutput
 from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
 from wiki_agent.runner.model_transport import (
     ModelTransport,
@@ -38,6 +39,18 @@ DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 HOSTED_WEB_SEARCH_TOOL = ({"type": "web_search"},)
+REQUIRED_TOOL_CHOICE = "required"
+DEFAULT_SYSTEM_INSTRUCTION = (
+    "You update exactly one attached wiki page. "
+    "Return only structured JSON matching the provided schema. "
+    "If you use hosted web search, issue concise search queries tailored to the user's request and the target topic. "
+    "Never submit the full prompt, full page content, or policy text as a search query."
+)
+WEB_RESEARCH_HINT_PATTERN = re.compile(
+    r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?)\b|[a-z0-9-]+\.[a-z]{2,}",
+    re.IGNORECASE,
+)
+HTTP_URL_PATTERN = re.compile(r"https?://\S+")
 PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
 PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
 REQUIRED_PROMPT_TOKENS = (
@@ -179,13 +192,31 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "INPUT_TOO_LARGE", "rendered model input exceeded byte limit")
         return 0
 
+    web_research_required = _requires_web_research(
+        prompt=envelope.prompt,
+        original_comment_text=envelope.original_comment_text,
+    )
+
     try:
-        decision, transport_capability_result = _generate_runner_decision(rendered_prompt, settings, transport=transport)
+        decision, transport_capability_result = _generate_runner_decision(
+            rendered_prompt,
+            settings,
+            transport=transport,
+            web_research_required=web_research_required,
+        )
     except ModelOutputError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_OUTPUT_INVALID", str(exc))
         return 0
     except Exception as exc:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_CALL_FAILED", _bounded_message(exc))
+        return 0
+
+    if web_research_required and not transport_capability_result.artifacts:
+        _emit_response(
+            STATUS_UPDATE_FAILED,
+            "WEB_RESEARCH_REQUIRED",
+            "required web research did not return any surfaced links",
+        )
         return 0
 
     result = _complete_runner_decision(
@@ -238,18 +269,17 @@ def _generate_runner_decision(
     settings: RunnerSettings,
     *,
     transport: ModelTransport,
-) -> RunnerDecision:
+    web_research_required: bool = False,
+) -> tuple[RunnerDecision, CapabilityResult]:
     try:
         response = transport.generate(
             ModelTransportRequest(
                 model=settings.openai_model,
-                system_instruction=(
-                    "You update exactly one attached wiki page. "
-                    "Return only structured JSON matching the provided schema."
-                ),
+                system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
                 user_prompt=rendered_prompt,
                 response_format=_response_format_schema(),
                 tools=HOSTED_WEB_SEARCH_TOOL,
+                tool_choice=REQUIRED_TOOL_CHOICE if web_research_required else None,
             )
         )
         payload = parse_json_output(response.output_text)
@@ -388,6 +418,20 @@ def _execute_update_primary_action(
             capability_result=capability_result,
         )
     ).final_page_content
+
+    invalid_body_link = _invalid_body_link(
+        current_page_content=current_page_content,
+        final_page_content=final_page_content,
+        web_research_outputs=tuple(
+            artifact for artifact in capability_result.artifacts if isinstance(artifact, WebResearchOutput)
+        ),
+    )
+    if invalid_body_link is not None:
+        return CompletionResult(
+            STATUS_UPDATE_FAILED,
+            "UNSURFACED_BODY_LINK",
+            f"updated page included a link not supported by current page content or surfaced web research: {invalid_body_link}",
+        )
 
     if _utf8_len(final_page_content) > settings.max_output_bytes:
         return CompletionResult(STATUS_UPDATE_FAILED, "OUTPUT_TOO_LARGE", "model output exceeded byte limit")
@@ -588,6 +632,40 @@ def _load_runner_openai_config_from_env():
 
 def _bounded_message(exc: Exception) -> str:
     return str(exc).strip()[:500] or exc.__class__.__name__
+
+
+def _requires_web_research(*, prompt: str, original_comment_text: str) -> bool:
+    combined = f"{prompt}\n{original_comment_text}"
+    return WEB_RESEARCH_HINT_PATTERN.search(combined) is not None
+
+
+def _invalid_body_link(
+    *,
+    current_page_content: str,
+    final_page_content: str,
+    web_research_outputs: tuple[WebResearchOutput, ...],
+) -> str | None:
+    if not web_research_outputs:
+        return None
+
+    current_urls = set(HTTP_URL_PATTERN.findall(_body_without_references(current_page_content)))
+    surfaced_urls = {output.url for output in web_research_outputs}
+
+    for url in HTTP_URL_PATTERN.findall(_body_without_references(final_page_content)):
+        normalized = url.rstrip(")].,;")
+        if normalized in current_urls or normalized in surfaced_urls:
+            continue
+        return normalized
+
+    return None
+
+
+def _body_without_references(markdown: str) -> str:
+    marker = "\n## References\n"
+    index = markdown.find(marker)
+    if index == -1:
+        return markdown
+    return markdown[:index]
 
 
 if __name__ == "__main__":

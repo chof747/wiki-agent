@@ -29,8 +29,8 @@ class PageComposer:
         if not web_research_outputs:
             return PageComposition(final_page_content=composition_input.model_page_content)
 
-        body, existing_references = _split_references_section(composition_input.model_page_content)
-        reference_lines = _merge_reference_lines(existing_references, web_research_outputs)
+        body, _existing_references = _split_references_section(composition_input.model_page_content)
+        reference_lines = _reference_lines(web_research_outputs)
         return PageComposition(
             final_page_content=body.rstrip() + "\n\n## References\n" + "\n".join(reference_lines) + "\n"
         )
@@ -46,26 +46,17 @@ def _split_references_section(markdown: str) -> tuple[str, tuple[str, ...]]:
     return body, references
 
 
-def _merge_reference_lines(
-    existing_references: tuple[str, ...],
-    web_research_outputs: tuple[WebResearchOutput, ...],
-) -> tuple[str, ...]:
-    merged: list[str] = []
+def _reference_lines(web_research_outputs: tuple[WebResearchOutput, ...]) -> tuple[str, ...]:
+    references: list[str] = []
     seen_urls: set[str] = set()
-
-    for line in existing_references:
-        url = _extract_url(line)
-        if url is not None:
-            seen_urls.add(url)
-        merged.append(line)
 
     for output in web_research_outputs:
         if output.url in seen_urls:
             continue
         seen_urls.add(output.url)
-        merged.append(f"- {output.url}")
+        references.append(f"- {output.url}")
 
-    return tuple(merged)
+    return tuple(references)
 
 
 def _extract_url(line: str) -> str | None:

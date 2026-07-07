@@ -37,6 +37,7 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
             user_prompt="user prompt",
             response_format={"type": "json_schema"},
             tools=({"type": "web_search"},),
+            tool_choice="required",
         )
     )
 
@@ -51,6 +52,7 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
         ],
         "text": {"format": {"type": "json_schema"}},
         "tools": [{"type": "web_search"}],
+        "tool_choice": "required",
     }
 
 
@@ -97,6 +99,129 @@ def test_openai_responses_transport_extracts_surfaced_web_search_urls() -> None:
         "https://example.com/1",
         "https://example.com/2",
     ]
+
+
+def test_openai_responses_transport_extracts_opened_and_cited_web_urls() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps({"action": "update"}),
+                output=[
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="search",
+                            queries=["latest wiki agent release"],
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="open_page",
+                            url="https://example.com/opened",
+                            title="Opened Source",
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text",
+                                text="Used sources",
+                                annotations=[
+                                    SimpleNamespace(
+                                        type="url_citation",
+                                        title="Cited Source",
+                                        url="https://example.com/cited",
+                                    ),
+                                    SimpleNamespace(
+                                        type="url_citation",
+                                        title="Opened Source",
+                                        url="https://example.com/opened",
+                                    ),
+                                ],
+                            )
+                        ],
+                    ),
+                ],
+            )
+
+    transport = OpenAIResponsesTransport(
+        api_key="test-key",
+        timeout_seconds=12.5,
+        client_factory=lambda **_kwargs: FakeClient(),
+    )
+
+    response = transport.generate(
+        ModelTransportRequest(
+            model="gpt-test",
+            system_instruction="system instruction",
+            user_prompt="user prompt",
+            response_format={"type": "json_schema"},
+        )
+    )
+
+    assert [(item.title, item.url) for item in response.web_research_outputs] == [
+        ("Opened Source", "https://example.com/opened"),
+        ("Cited Source", "https://example.com/cited"),
+    ]
+
+
+def test_openai_responses_transport_logs_raw_web_search_output(capsys: pytest.CaptureFixture[str]) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps({"action": "update"}),
+                output=[
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="search",
+                            sources=[SimpleNamespace(type="url", url="https://example.com/1")],
+                        ),
+                        status="completed",
+                    )
+                ],
+            )
+
+    transport = OpenAIResponsesTransport(
+        api_key="test-key",
+        timeout_seconds=12.5,
+        client_factory=lambda **_kwargs: FakeClient(),
+    )
+
+    transport.generate(
+        ModelTransportRequest(
+            model="gpt-test",
+            system_instruction="system instruction",
+            user_prompt="user prompt",
+            response_format={"type": "json_schema"},
+        )
+    )
+
+    stderr_lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(stderr_lines) == 1
+    assert json.loads(stderr_lines[0]) == {
+        "event": "runner.web_search_output",
+        "web_search_output": [
+            {
+                "action": {
+                    "sources": [{"type": "url", "url": "https://example.com/1"}],
+                    "type": "search",
+                },
+                "status": "completed",
+                "type": "web_search_call",
+            }
+        ],
+    }
 
 
 def test_openai_responses_transport_rejects_incomplete_status() -> None:
