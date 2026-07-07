@@ -42,16 +42,20 @@ def test_page_composer_appends_trailing_references_for_web_research_outputs() ->
     )
 
 
-def test_page_composer_rebuilds_existing_references_from_surfaced_web_research_outputs() -> None:
+def test_page_composer_preserves_existing_references_from_current_page() -> None:
     composition = PageComposer().compose_update(
         PageCompositionInput(
-            current_page_content="# Current\n",
+            current_page_content=(
+                "# Current\n\n"
+                "## References\n"
+                "- https://example.com/existing\n"
+                "- https://example.com/1\n"
+            ),
             model_page_content=(
                 "# Updated\n\n"
                 "New facts.\n\n"
                 "## References\n"
-                "- https://example.com/existing\n"
-                "- https://example.com/1\n"
+                "- existing source without link\n"
             ),
             capability_result=CapabilityResult(
                 artifacts=(
@@ -67,6 +71,7 @@ def test_page_composer_rebuilds_existing_references_from_surfaced_web_research_o
             "# Updated\n\n"
             "New facts.\n\n"
             "## References\n"
+            "- https://example.com/existing\n"
             "- https://example.com/1\n"
             "- https://example.com/2\n"
         )
@@ -100,5 +105,109 @@ def test_page_composer_discloses_material_budget_constraints_before_references()
             "This update reflects only the evidence gathered before the limit was reached.\n\n"
             "## References\n"
             "- https://example.com/1\n"
+        )
+    )
+
+
+def test_page_composer_ignores_model_reference_lines_that_drop_existing_links() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content=(
+                "# Current\n\n"
+                "## References\n"
+                "- Existing source: https://example.com/existing\n"
+            ),
+            model_page_content=(
+                "# Updated\n\n"
+                "New facts.\n\n"
+                "## References\n"
+                "- Existing source\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Source 2", url="https://example.com/2"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "New facts.\n\n"
+            "## References\n"
+            "- Existing source: https://example.com/existing\n"
+            "- https://example.com/2\n"
+        )
+    )
+
+
+def test_page_composer_deduplicates_existing_and_new_reference_urls() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content=(
+                "# Current\n\n"
+                "## References\n"
+                "- https://example.com/1\n"
+                "- https://example.com/2\n"
+            ),
+            model_page_content=(
+                "# Updated\n\n"
+                "New facts.\n\n"
+                "## References\n"
+                "- https://example.com/2\n"
+                "- https://example.com/3\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Source 1", url="https://example.com/1"),
+                    WebResearchOutput(title="Source 3", url="https://example.com/3"),
+                    WebResearchOutput(title="Source 4", url="https://example.com/4"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "New facts.\n\n"
+            "## References\n"
+            "- https://example.com/1\n"
+            "- https://example.com/2\n"
+            "- https://example.com/3\n"
+            "- https://example.com/4\n"
+        )
+    )
+
+
+def test_page_composer_removes_reference_when_its_body_link_is_removed() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content=(
+                "# Current\n\n"
+                "See https://example.com/obsolete for details.\n\n"
+                "## References\n"
+                "- https://example.com/obsolete\n"
+                "- https://example.com/still-relevant\n"
+            ),
+            model_page_content=(
+                "# Updated\n\n"
+                "Fresh summary without the obsolete inline link.\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Still relevant", url="https://example.com/still-relevant"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "Fresh summary without the obsolete inline link.\n\n"
+            "## References\n"
+            "- https://example.com/still-relevant\n"
         )
     )
