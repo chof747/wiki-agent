@@ -30,9 +30,9 @@ class PageComposer:
             return PageComposition(final_page_content=composition_input.model_page_content)
 
         current_body, current_references = _split_references_section(composition_input.current_page_content)
-        body, model_references = _split_references_section(composition_input.model_page_content)
+        body, _model_references = _split_references_section(composition_input.model_page_content)
         reference_lines = _reference_lines(
-            existing_references=current_references + model_references,
+            existing_references=current_references,
             web_research_outputs=web_research_outputs,
             current_page_body=current_body,
             final_page_body=body,
