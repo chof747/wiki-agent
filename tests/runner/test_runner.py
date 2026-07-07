@@ -36,6 +36,8 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     openai_calls = _read_jsonl(openai_log_path)
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == runner.DEFAULT_OPENAI_MODEL
+    assert openai_calls[0]["tools"] == [{"type": "web_search"}]
+    assert "tool_choice" not in openai_calls[0]
     rendered_prompt = openai_calls[0]["input"][1]["content"]
     assert "Target page: /pages/example" in rendered_prompt
     assert "Stripped prompt:\n# Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
@@ -45,6 +47,43 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] == "# Replacement page\n\nUpdated content.\n"
     assert state["deleted_comment_ids"] == ["comment-1"]
+
+
+def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+            "web_search_sources": [
+                "https://example.com/release-notes",
+                "https://docs.example.com/product",
+            ],
+        },
+        original_comment_text="@marvin update this page with current public release details",
+        prompt="update this page with current public release details",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+    assert _read_jsonl(openai_log_path)[0]["tools"] == [{"type": "web_search"}]
+    assert _read_jsonl(openai_log_path)[0]["tool_choice"] == "required"
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Updated content.\n\n"
+        "## References\n"
+        "- https://example.com/release-notes\n"
+        "- https://docs.example.com/product\n"
+    )
 
 
 def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
@@ -149,10 +188,12 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
         settings: runner.RunnerSettings,
         *,
         transport: object,
-    ) -> runner.RunnerDecision:
+        web_research_required: bool = False,
+    ) -> tuple[runner.RunnerDecision, runner.CapabilityResult]:
         del transport
+        assert web_research_required is False
         settings_seen["settings"] = settings
-        return runner.UpdateDecision(final_page_content="# Replacement page\n")
+        return runner.UpdateDecision(final_page_content="# Replacement page\n"), runner.CapabilityResult()
 
     monkeypatch.setattr(runner, "_read_page", lambda _target_page: "# Current page\n")
     monkeypatch.setattr(runner, "_load_prompt_template", lambda: "{{PROMPT}}")
@@ -180,6 +221,73 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
         max_output_bytes=222,
         model_timeout_seconds=7.5,
     )
+
+
+def test_runner_requires_web_search_for_current_news_requests(tmp_path: Path) -> None:
+    result, _state_path, _helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+            "web_search_sources": ["https://example.com/story-1"],
+        },
+        original_comment_text="@marvin search the current news and summarize the top stories here",
+        prompt="search the current news and summarize the top stories here",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _read_jsonl(openai_log_path)[0]["tool_choice"] == "required"
+    system_instruction = _read_jsonl(openai_log_path)[0]["input"][0]["content"]
+    assert "issue concise search queries tailored to the user's request and the target topic" in system_instruction
+    assert "Never submit the full prompt, full page content, or policy text as a search query." in system_instruction
+
+
+def test_runner_fails_when_required_web_research_returns_no_surfaced_links(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"}},
+        original_comment_text="@marvin search the current news and summarize the top stories here",
+        prompt="search the current news and summarize the top stories here",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "WEB_RESEARCH_REQUIRED",
+        "message": "required web research did not return any surfaced links",
+    }
+    assert _read_jsonl(helper_log_path) == [{"command": "page.get", "page": "/pages/example"}]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
+def test_runner_fails_when_updated_body_contains_unsurfaced_link(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {
+                "final_page_content": (
+                    "# Replacement page\n\n"
+                    "Read [story](https://www.example.com/story1).\n"
+                )
+            },
+            "web_search_sources": ["https://example.com/story-1"],
+        },
+        original_comment_text="@marvin search the current news and summarize the top stories here with links",
+        prompt="search the current news and summarize the top stories here with links",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "UNSURFACED_BODY_LINK",
+        "message": "updated page included a link not supported by current page content or surfaced web research: https://www.example.com/story1",
+    }
+    assert _read_jsonl(helper_log_path) == [{"command": "page.get", "page": "/pages/example"}]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
 
 
 def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Path) -> None:
@@ -452,6 +560,34 @@ def test_runner_returns_delete_failed_after_confirmed_update_when_comment_delete
     assert state["deleted_comment_ids"] == ["comment-1"]
 
 
+def test_runner_treats_delete_helper_error_as_success_when_source_comment_is_already_absent(
+    tmp_path: Path,
+) -> None:
+    result, state_path, helper_log_path, _ = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        delete_error_message="comment file was already gone",
+        remove_comment_before_delete_error=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+
+    helper_calls = _read_jsonl(helper_log_path)
+    assert [call["command"] for call in helper_calls] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == "# Replacement page\n"
+    assert state["deleted_comment_ids"] == ["comment-1"]
+
+
 def test_runner_executes_visible_rejection_flow_for_cross_page_request(tmp_path: Path) -> None:
     result, state_path, helper_log_path, openai_log_path = _run_runner(
         tmp_path,
@@ -691,6 +827,8 @@ def _run_runner(
     openai_output: dict[str, object],
     extra_env: dict[str, str] | None = None,
     keep_comment_after_delete: bool = False,
+    delete_error_message: str | None = None,
+    remove_comment_before_delete_error: bool = False,
     suppress_created_comment: bool = False,
     strip_created_comment_text: bool = False,
     original_comment_text: str = "@marvin # Rewrite the page\n\nMake it shorter.\n",
@@ -709,6 +847,8 @@ def _run_runner(
                 "deleted_comment_ids": [],
                 "comments": [{"id": "comment-1", "text": original_comment_text}],
                 "keep_comment_after_delete": keep_comment_after_delete,
+                "delete_error_message": delete_error_message,
+                "remove_comment_before_delete_error": remove_comment_before_delete_error,
                 "suppress_created_comment": suppress_created_comment,
                 "strip_created_comment_text": strip_created_comment_text,
             }
@@ -816,6 +956,10 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "        if isinstance(OUTPUT_PAYLOAD, dict) and 'raise_error' in OUTPUT_PAYLOAD:\n"
             "            raise RuntimeError(OUTPUT_PAYLOAD['raise_error'])\n"
             "        payload = OUTPUT_PAYLOAD\n"
+            "        surfaced_sources = []\n"
+            "        if isinstance(payload, dict) and 'model_output' in payload:\n"
+            "            surfaced_sources = payload.get('web_search_sources', [])\n"
+            "            payload = payload['model_output']\n"
             "        if isinstance(payload, dict) and 'action' not in payload and set(payload.keys()) == {'final_page_content'}:\n"
             "            payload = {\n"
             "                'action': 'update',\n"
@@ -823,7 +967,10 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "                'rejection_reason_code': None,\n"
             "                'explanation': None,\n"
             "            }\n"
-            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload))\n"
+            "        output = []\n"
+            "        if surfaced_sources:\n"
+            "            output.append(types.SimpleNamespace(type='web_search_call', action=types.SimpleNamespace(type='search', sources=[types.SimpleNamespace(type='url', url=url) for url in surfaced_sources])))\n"
+            "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload), output=output)\n"
         ),
         encoding="utf-8",
     )
@@ -885,6 +1032,13 @@ def _write_wikigo_comments_helper(path: Path, state_path: Path, log_path: Path) 
             "    log_path.write_text(existing + line, encoding='utf-8')\n"
             "    deleted = state.setdefault('deleted_comment_ids', [])\n"
             "    deleted.append(comment_id)\n"
+            "    if state.get('remove_comment_before_delete_error'):\n"
+            "        state['comments'] = [item for item in state.get('comments', []) if item.get('id') != comment_id]\n"
+            "    error_message = state.get('delete_error_message')\n"
+            "    if error_message:\n"
+            "        state_path.write_text(json.dumps(state), encoding='utf-8')\n"
+            "        sys.stderr.write(error_message)\n"
+            "        raise SystemExit(1)\n"
             "    if not state.get('keep_comment_after_delete'):\n"
             "        state['comments'] = [item for item in state.get('comments', []) if item.get('id') != comment_id]\n"
             "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"

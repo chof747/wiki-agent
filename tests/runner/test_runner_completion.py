@@ -11,6 +11,7 @@ class FakeCompletionIO:
     saved_markdown: str | None = None
     confirmed_markdown: str = "# Updated\n"
     keep_comment_after_delete: bool = False
+    delete_comment_error: str | None = None
     suppress_created_comment: bool = False
     strip_created_comment_text: bool = False
     calls: list[str] = field(default_factory=list)
@@ -38,6 +39,8 @@ class FakeCompletionIO:
         self.calls.append("comments.delete")
         if not self.keep_comment_after_delete:
             self.comments = [comment for comment in self.comments if comment.get("id") != comment_identity]
+        if self.delete_comment_error is not None:
+            raise RuntimeError(self.delete_comment_error)
 
 
 def _completion(io: FakeCompletionIO) -> runner_completion.RunnerCompletion:
@@ -118,5 +121,38 @@ def test_complete_finalization_returns_delete_failed_after_confirmed_visible_wor
         status="DELETE_FAILED",
         error_code="DELETE_CONFIRMATION_FAILED",
         message="source comment still present after delete confirmation",
+    )
+    assert io.calls == ["comments.delete", "comments.list"]
+
+
+def test_complete_finalization_treats_missing_source_comment_after_delete_error_as_success() -> None:
+    io = FakeCompletionIO(delete_comment_error="comment file was already gone")
+
+    result = _completion(io).complete_finalization(
+        target_page="/pages/example",
+        comment_identity="comment-1",
+        primary_action=runner_completion.ConfirmedPrimaryAction(success_status="SUCCESS"),
+    )
+
+    assert result == runner_completion.CompletionResult(status="SUCCESS")
+    assert io.calls == ["comments.delete", "comments.list"]
+
+
+def test_complete_finalization_returns_comment_delete_failed_when_delete_error_leaves_comment_present() -> None:
+    io = FakeCompletionIO(
+        keep_comment_after_delete=True,
+        delete_comment_error="delete helper failed",
+    )
+
+    result = _completion(io).complete_finalization(
+        target_page="/pages/example",
+        comment_identity="comment-1",
+        primary_action=runner_completion.ConfirmedPrimaryAction(success_status="SUCCESS"),
+    )
+
+    assert result == runner_completion.CompletionResult(
+        status="DELETE_FAILED",
+        error_code="COMMENT_DELETE_FAILED",
+        message="delete helper failed",
     )
     assert io.calls == ["comments.delete", "comments.list"]

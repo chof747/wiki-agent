@@ -92,17 +92,22 @@ class RunnerCompletion:
         target_page: str,
         primary_action: ConfirmedPrimaryAction,
     ) -> CompletionResult:
+        delete_error: Exception | None = None
         try:
             self.delete_comment(comment_identity, target_page)
         except Exception as exc:
-            return CompletionResult(STATUS_DELETE_FAILED, "COMMENT_DELETE_FAILED", str(exc))
+            delete_error = exc
 
         try:
             remaining_comments = self.list_comments(target_page)
         except Exception as exc:
-            return CompletionResult(STATUS_DELETE_FAILED, "DELETE_CONFIRMATION_FAILED", str(exc))
+            error_code = "DELETE_CONFIRMATION_FAILED" if delete_error is None else "COMMENT_DELETE_FAILED"
+            message = str(exc) if delete_error is None else str(delete_error)
+            return CompletionResult(STATUS_DELETE_FAILED, error_code, message)
 
         if any(comment.get("id") == comment_identity for comment in remaining_comments):
+            if delete_error is not None:
+                return CompletionResult(STATUS_DELETE_FAILED, "COMMENT_DELETE_FAILED", str(delete_error))
             return CompletionResult(
                 STATUS_DELETE_FAILED,
                 "DELETE_CONFIRMATION_FAILED",
