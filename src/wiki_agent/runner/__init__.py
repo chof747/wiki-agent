@@ -538,11 +538,13 @@ def _build_rejection_comment(
     if truncated:
         quoted_lines.append("> [original comment truncated for length]")
 
+    quoted_block = "\n".join(quoted_lines)
+
     return (
         f'<!-- wiki-agent:rejection source_comment_id="{comment_identity}" '
         f'reason_code="{rejection_reason_code}" -->\n\n'
         "Marvin could not process this request.\n\n"
-        f"{'\n'.join(quoted_lines)}\n\n"
+        f"{quoted_block}\n\n"
         f"Reason (`{rejection_reason_code}`): {explanation}\n"
     )
 

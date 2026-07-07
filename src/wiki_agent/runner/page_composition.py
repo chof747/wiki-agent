@@ -29,8 +29,14 @@ class PageComposer:
         if not web_research_outputs:
             return PageComposition(final_page_content=composition_input.model_page_content)
 
-        body, _existing_references = _split_references_section(composition_input.model_page_content)
-        reference_lines = _reference_lines(web_research_outputs)
+        current_body, current_references = _split_references_section(composition_input.current_page_content)
+        body, _model_references = _split_references_section(composition_input.model_page_content)
+        reference_lines = _reference_lines(
+            existing_references=current_references,
+            web_research_outputs=web_research_outputs,
+            current_page_body=current_body,
+            final_page_body=body,
+        )
         return PageComposition(
             final_page_content=body.rstrip() + "\n\n## References\n" + "\n".join(reference_lines) + "\n"
         )
@@ -46,15 +52,38 @@ def _split_references_section(markdown: str) -> tuple[str, tuple[str, ...]]:
     return body, references
 
 
-def _reference_lines(web_research_outputs: tuple[WebResearchOutput, ...]) -> tuple[str, ...]:
+def _reference_lines(
+    *,
+    existing_references: tuple[str, ...],
+    web_research_outputs: tuple[WebResearchOutput, ...],
+    current_page_body: str,
+    final_page_body: str,
+) -> tuple[str, ...]:
     references: list[str] = []
-    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+
+    for line in existing_references:
+        if _is_clearly_obsolete_reference(
+            line,
+            current_page_body=current_page_body,
+            final_page_body=final_page_body,
+        ):
+            continue
+
+        key = _reference_dedupe_key(line)
+        if key in seen_keys:
+            continue
+
+        seen_keys.add(key)
+        references.append(line)
 
     for output in web_research_outputs:
-        if output.url in seen_urls:
+        line = f"- {output.url}"
+        key = _reference_dedupe_key(line)
+        if key in seen_keys:
             continue
-        seen_urls.add(output.url)
-        references.append(f"- {output.url}")
+        seen_keys.add(key)
+        references.append(line)
 
     return tuple(references)
 
@@ -64,3 +93,24 @@ def _extract_url(line: str) -> str | None:
     if match is None:
         return None
     return match.group(0).rstrip(")].,;")
+
+
+def _reference_dedupe_key(line: str) -> str:
+    return _extract_url(line) or line
+
+
+def _is_clearly_obsolete_reference(
+    line: str,
+    *,
+    current_page_body: str,
+    final_page_body: str,
+) -> bool:
+    url = _extract_url(line)
+    if url is None:
+        return False
+
+    current_body_urls = set(re.findall(r"https?://\S+", current_page_body))
+    final_body_urls = set(re.findall(r"https?://\S+", final_page_body))
+    normalized_current_urls = {current_url.rstrip(")].,;") for current_url in current_body_urls}
+    normalized_final_urls = {final_url.rstrip(")].,;") for final_url in final_body_urls}
+    return url in normalized_current_urls and url not in normalized_final_urls
