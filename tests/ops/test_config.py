@@ -55,3 +55,23 @@ def test_service_timing_env_overrides_are_applied(monkeypatch) -> None:
 
     assert config.service.scan_interval.total_seconds() == 5
     assert config.service.stale_processing_timeout.total_seconds() == 11
+
+
+def test_runner_research_budget_defaults_are_loaded() -> None:
+    config_path = _fixture_config_path()
+
+    config = load_config(config_path)
+
+    assert config.runner_research_budget.max_search_actions == 3
+    assert config.runner_research_budget.max_opened_links == 5
+
+
+def test_runner_research_budget_env_overrides_are_applied(monkeypatch) -> None:
+    config_path = _fixture_config_path()
+    monkeypatch.setenv("WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS", "4")
+    monkeypatch.setenv("WIKI_AGENT_RUNNER_MAX_OPENED_LINKS", "7")
+
+    config = load_config(config_path)
+
+    assert config.runner_research_budget.max_search_actions == 4
+    assert config.runner_research_budget.max_opened_links == 7

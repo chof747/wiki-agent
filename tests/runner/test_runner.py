@@ -86,6 +86,73 @@ def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path
     )
 
 
+def test_runner_completes_best_effort_update_with_budget_constraint_disclosure(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+            "response_output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "type": "search",
+                        "sources": [
+                            {"type": "url", "url": "https://example.com/release-notes"},
+                            {"type": "url", "url": "https://docs.example.com/product"},
+                        ],
+                    },
+                },
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "type": "open_page",
+                        "url": "https://docs.example.com/product",
+                        "title": "Opened product docs",
+                    },
+                },
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "type": "search",
+                        "sources": [
+                            {"type": "url", "url": "https://example.com/over-budget-source"}
+                        ],
+                    },
+                },
+            ],
+        },
+        original_comment_text="@marvin update this page with current public release details",
+        prompt="update this page with current public release details",
+        extra_env={
+            "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS": "1",
+            "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+    assert _read_jsonl(openai_log_path)[0]["tool_choice"] == "required"
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Updated content.\n\n"
+        "> Note: Web research hit the per-invocation budget. "
+        "This update reflects only the evidence gathered before the limit was reached.\n\n"
+        "## References\n"
+        "- https://example.com/release-notes\n"
+        "- https://docs.example.com/product\n"
+    )
+
+
 def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -123,6 +190,54 @@ def test_runner_reads_openai_settings_from_app_config(tmp_path: Path) -> None:
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == "gpt-4.1-mini"
     assert openai_calls[0]["timeout"] == 12.5
+
+
+def test_runner_returns_structured_failure_for_invalid_budget_in_app_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        (
+            "bot_name = \"marvin\"\n\n"
+            "[postgres]\n"
+            "dsn = \"postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent\"\n\n"
+            "[wikigo]\n"
+            "base_url = \"http://127.0.0.1:4010\"\n"
+            "username = \"marvin\"\n"
+            "password = \"marvin-pass\"\n\n"
+            "[runner]\n"
+            "command = [\"wiki-agent-runner\"]\n\n"
+            "[runner.openai]\n"
+            "api_key = \"config-openai-key\"\n"
+            "model = \"gpt-4.1-mini\"\n"
+            "max_input_bytes = 12345\n"
+            "max_output_bytes = 23456\n"
+            "timeout_seconds = 12.5\n\n"
+            "[runner.research_budget]\n"
+            "max_search_actions = 0\n"
+            "max_opened_links = 5\n\n"
+            "[service]\n"
+            "log_level = \"INFO\"\n"
+        ),
+        encoding="utf-8",
+    )
+
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+        extra_env={"WIKI_AGENT_CONFIG_PATH": str(config_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "RUNNER_CONFIG_INVALID",
+        "message": "runner.research_budget.max_search_actions must be a positive integer",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
 
 
 def test_runner_ignores_invalid_unrelated_wikigo_config(tmp_path: Path) -> None:
@@ -172,6 +287,8 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
             "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES=111\n"
             "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES=222\n"
             "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS=7.5\n"
+            "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS=4\n"
+            "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS=6\n"
         ),
         encoding="utf-8",
     )
@@ -183,6 +300,8 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS", raising=False)
+    monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_OPENED_LINKS", raising=False)
     def fake_generate_runner_decision(
         _prompt: str,
         settings: runner.RunnerSettings,
@@ -220,6 +339,8 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
         max_input_bytes=111,
         max_output_bytes=222,
         model_timeout_seconds=7.5,
+        max_search_actions=4,
+        max_opened_links=6,
     )
 
 
@@ -240,6 +361,7 @@ def test_runner_requires_web_search_for_current_news_requests(tmp_path: Path) ->
     system_instruction = _read_jsonl(openai_log_path)[0]["input"][0]["content"]
     assert "issue concise search queries tailored to the user's request and the target topic" in system_instruction
     assert "Never submit the full prompt, full page content, or policy text as a search query." in system_instruction
+    assert "Use at most 3 hosted web search actions and at most 5 opened surfaced links during this invocation." in system_instruction
 
 
 def test_runner_fails_when_required_web_research_returns_no_surfaced_links(tmp_path: Path) -> None:
@@ -438,6 +560,27 @@ def test_runner_returns_structured_failure_for_invalid_max_output_bytes_env(tmp_
         "status": "UPDATE_FAILED",
         "error_code": "RUNNER_CONFIG_INVALID",
         "message": "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES must be a positive integer",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert _read_jsonl(helper_log_path) == []
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
+def test_runner_returns_structured_failure_for_invalid_max_search_actions_env(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"final_page_content": "# Replacement page\n"},
+        extra_env={"WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS": "0"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "RUNNER_CONFIG_INVALID",
+        "message": "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS must be a positive integer",
     }
     assert _read_jsonl(openai_log_path) == []
     assert _read_jsonl(helper_log_path) == []
@@ -872,6 +1015,8 @@ def _run_runner(
         "WIKI_AGENT_RUNNER_MAX_INPUT_BYTES",
         "WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES",
         "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
+        "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS",
+        "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS",
     ):
         env.pop(name, None)
     if not (extra_env and "WIKI_AGENT_CONFIG_PATH" in extra_env):
@@ -882,6 +1027,8 @@ def _run_runner(
         env["WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS"] = str(
             runner.DEFAULT_MODEL_TIMEOUT_SECONDS
         )
+        env["WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS"] = "3"
+        env["WIKI_AGENT_RUNNER_MAX_OPENED_LINKS"] = "5"
     if extra_env:
         env.update(extra_env)
 
@@ -946,6 +1093,13 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "    def __init__(self, timeout):\n"
             "        self.timeout = timeout\n"
             "\n"
+            "    def _namespace(self, value):\n"
+            "        if isinstance(value, dict):\n"
+            "            return types.SimpleNamespace(**{key: self._namespace(item) for key, item in value.items()})\n"
+            "        if isinstance(value, list):\n"
+            "            return [self._namespace(item) for item in value]\n"
+            "        return value\n"
+            "\n"
             "    def create(self, **kwargs):\n"
             "        entry = {'timeout': self.timeout, **kwargs}\n"
             "        if LOG_PATH.exists():\n"
@@ -957,8 +1111,10 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "            raise RuntimeError(OUTPUT_PAYLOAD['raise_error'])\n"
             "        payload = OUTPUT_PAYLOAD\n"
             "        surfaced_sources = []\n"
+            "        response_output = []\n"
             "        if isinstance(payload, dict) and 'model_output' in payload:\n"
             "            surfaced_sources = payload.get('web_search_sources', [])\n"
+            "            response_output = payload.get('response_output', [])\n"
             "            payload = payload['model_output']\n"
             "        if isinstance(payload, dict) and 'action' not in payload and set(payload.keys()) == {'final_page_content'}:\n"
             "            payload = {\n"
@@ -967,7 +1123,7 @@ def _write_fake_openai_package(path: Path, log_path: Path, output_payload: dict[
             "                'rejection_reason_code': None,\n"
             "                'explanation': None,\n"
             "            }\n"
-            "        output = []\n"
+            "        output = [self._namespace(item) for item in response_output]\n"
             "        if surfaced_sources:\n"
             "            output.append(types.SimpleNamespace(type='web_search_call', action=types.SimpleNamespace(type='search', sources=[types.SimpleNamespace(type='url', url=url) for url in surfaced_sources])))\n"
             "        return types.SimpleNamespace(status='completed', output_text=json.dumps(payload), output=output)\n"

@@ -5,7 +5,11 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
-from wiki_agent.runner.capabilities.web_research import WebResearchOutput
+from wiki_agent.runner.capabilities.web_research import (
+    WebResearchBudget,
+    WebResearchBudgetUsage,
+    WebResearchOutput,
+)
 
 
 class ModelTransportError(RuntimeError):
@@ -20,12 +24,14 @@ class ModelTransportRequest:
     response_format: dict[str, Any]
     tools: tuple[dict[str, Any], ...] = ()
     tool_choice: object | None = None
+    research_budget: WebResearchBudget | None = None
 
 
 @dataclass(frozen=True)
 class ModelTransportResponse:
     output_text: str
     web_research_outputs: tuple[WebResearchOutput, ...] = ()
+    web_research_budget_usage: WebResearchBudgetUsage = WebResearchBudgetUsage()
 
 
 class ModelTransport(Protocol):
@@ -73,9 +79,14 @@ class OpenAIResponsesTransport:
 
         _emit_web_search_debug_log(response)
 
+        web_research_outputs, web_research_budget_usage = _extract_web_research_outputs(
+            response,
+            request.research_budget,
+        )
         return ModelTransportResponse(
             output_text=output_text,
-            web_research_outputs=_extract_web_research_outputs(response),
+            web_research_outputs=web_research_outputs,
+            web_research_budget_usage=web_research_budget_usage,
         )
 
 
@@ -108,31 +119,72 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _extract_web_research_outputs(response: Any) -> tuple[WebResearchOutput, ...]:
+def _extract_web_research_outputs(
+    response: Any,
+    research_budget: WebResearchBudget | None,
+) -> tuple[tuple[WebResearchOutput, ...], WebResearchBudgetUsage]:
     outputs: list[WebResearchOutput] = []
     seen_urls: set[str] = set()
+    allowed_urls: set[str] = set()
+    search_actions_used = 0
+    opened_links_used = 0
+    materially_constrained = False
+
+    def append_output(url: str, title: str) -> None:
+        if url in seen_urls:
+            return
+        seen_urls.add(url)
+        allowed_urls.add(url)
+        outputs.append(WebResearchOutput(title=title, url=url))
 
     for item in getattr(response, "output", ()) or ():
         item_type = getattr(item, "type", None)
         item_payload = _json_safe(item)
 
         if item_type == "web_search_call":
-            for url, title in _extract_url_records(item_payload):
-                if url in seen_urls:
+            action_type = _web_search_action_type(item_payload)
+            if action_type == "search":
+                if research_budget is not None and search_actions_used >= research_budget.max_search_actions:
+                    materially_constrained = True
                     continue
-                seen_urls.add(url)
-                outputs.append(WebResearchOutput(title=title, url=url))
+                search_actions_used += 1
+            elif action_type == "open_page":
+                if research_budget is not None and opened_links_used >= research_budget.max_opened_links:
+                    materially_constrained = True
+                    continue
+                opened_links_used += 1
+
+            for url, title in _extract_url_records(item_payload):
+                append_output(url, title)
             continue
 
         for annotation in _extract_annotations(item_payload):
             url = annotation.get("url")
-            if not isinstance(url, str) or not url or url in seen_urls:
+            if not isinstance(url, str) or not url:
                 continue
-            seen_urls.add(url)
+            if research_budget is not None and url not in allowed_urls:
+                materially_constrained = True
+                continue
             title = annotation.get("title")
-            outputs.append(WebResearchOutput(title=title if isinstance(title, str) and title else url, url=url))
+            append_output(url, title if isinstance(title, str) and title else url)
 
-    return tuple(outputs)
+    return tuple(outputs), WebResearchBudgetUsage(
+        search_actions_used=search_actions_used,
+        opened_links_used=opened_links_used,
+        materially_constrained=materially_constrained,
+    )
+
+
+def _web_search_action_type(item_payload: Any) -> str | None:
+    if not isinstance(item_payload, dict):
+        return None
+
+    action = item_payload.get("action")
+    if not isinstance(action, dict):
+        return None
+
+    action_type = action.get("type")
+    return action_type if isinstance(action_type, str) else None
 
 
 def _extract_url_records(value: Any) -> tuple[tuple[str, str], ...]:

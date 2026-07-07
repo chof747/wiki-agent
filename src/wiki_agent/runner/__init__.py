@@ -14,9 +14,13 @@ from typing import Any
 from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
-from wiki_agent.ops.config import load_runner_openai_config
+from wiki_agent.ops.config import load_runner_openai_config, load_runner_research_budget_config
 from wiki_agent.runner.capabilities.orchestration import CapabilityContext, CapabilityOrchestrator, CapabilityResult
-from wiki_agent.runner.capabilities.web_research import WebResearchOutput
+from wiki_agent.runner.capabilities.web_research import (
+    WebResearchBudget,
+    WebResearchBudgetConstraint,
+    WebResearchOutput,
+)
 from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
 from wiki_agent.runner.model_transport import (
     ModelTransport,
@@ -103,10 +107,13 @@ class RunnerSettings:
     max_input_bytes: int
     max_output_bytes: int
     model_timeout_seconds: float
+    max_search_actions: int
+    max_opened_links: int
 
     @classmethod
     def from_env(cls) -> "RunnerSettings":
         config_openai = _load_runner_openai_config_from_env()
+        config_research_budget = _load_runner_research_budget_config_from_env()
         return cls(
             api_key=_read_non_empty_string_env(
                 "OPENAI_API_KEY",
@@ -127,6 +134,14 @@ class RunnerSettings:
             model_timeout_seconds=_read_positive_float_env(
                 "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
                 config_openai.timeout_seconds if config_openai is not None else DEFAULT_MODEL_TIMEOUT_SECONDS,
+            ),
+            max_search_actions=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS",
+                config_research_budget.max_search_actions if config_research_budget is not None else 3,
+            ),
+            max_opened_links=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS",
+                config_research_budget.max_opened_links if config_research_budget is not None else 5,
             ),
         )
 
@@ -275,18 +290,26 @@ def _generate_runner_decision(
         response = transport.generate(
             ModelTransportRequest(
                 model=settings.openai_model,
-                system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
+                system_instruction=_system_instruction(settings),
                 user_prompt=rendered_prompt,
                 response_format=_response_format_schema(),
                 tools=HOSTED_WEB_SEARCH_TOOL,
                 tool_choice=REQUIRED_TOOL_CHOICE if web_research_required else None,
+                research_budget=WebResearchBudget(
+                    max_search_actions=settings.max_search_actions,
+                    max_opened_links=settings.max_opened_links,
+                ),
             )
         )
         payload = parse_json_output(response.output_text)
     except ModelTransportError as exc:
         raise ModelOutputError(str(exc)) from exc
 
-    return _validate_model_payload(payload), CapabilityResult(artifacts=response.web_research_outputs)
+    artifacts: tuple[object, ...] = response.web_research_outputs
+    if response.web_research_budget_usage.materially_constrained and response.web_research_outputs:
+        artifacts = artifacts + (WebResearchBudgetConstraint(message=_research_budget_constraint_message()),)
+
+    return _validate_model_payload(payload), CapabilityResult(artifacts=artifacts)
 
 
 def _response_format_schema() -> dict[str, Any]:
@@ -630,6 +653,13 @@ def _load_runner_openai_config_from_env():
     return load_runner_openai_config(Path(config_path_value))
 
 
+def _load_runner_research_budget_config_from_env():
+    config_path_value = os.getenv("WIKI_AGENT_CONFIG_PATH")
+    if not config_path_value:
+        return None
+    return load_runner_research_budget_config(Path(config_path_value))
+
+
 def _bounded_message(exc: Exception) -> str:
     return str(exc).strip()[:500] or exc.__class__.__name__
 
@@ -637,6 +667,22 @@ def _bounded_message(exc: Exception) -> str:
 def _requires_web_research(*, prompt: str, original_comment_text: str) -> bool:
     combined = f"{prompt}\n{original_comment_text}"
     return WEB_RESEARCH_HINT_PATTERN.search(combined) is not None
+
+
+def _system_instruction(settings: RunnerSettings) -> str:
+    return (
+        DEFAULT_SYSTEM_INSTRUCTION
+        + " "
+        + f"Use at most {settings.max_search_actions} hosted web search actions and at most "
+        + f"{settings.max_opened_links} opened surfaced links during this invocation."
+    )
+
+
+def _research_budget_constraint_message() -> str:
+    return (
+        "Web research hit the per-invocation budget. "
+        "This update reflects only the evidence gathered before the limit was reached."
+    )
 
 
 def _invalid_body_link(

@@ -11,6 +11,7 @@ from wiki_agent.runner.model_transport import (
     OpenAIResponsesTransport,
     parse_json_output,
 )
+from wiki_agent.runner.capabilities.web_research import WebResearchBudget
 
 
 def test_openai_responses_transport_builds_one_structured_request() -> None:
@@ -222,6 +223,90 @@ def test_openai_responses_transport_logs_raw_web_search_output(capsys: pytest.Ca
             }
         ],
     }
+
+
+def test_openai_responses_transport_stops_collecting_web_research_after_budget_exhaustion() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps({"action": "update"}),
+                output=[
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="search",
+                            sources=[
+                                SimpleNamespace(type="url", url="https://example.com/1"),
+                                SimpleNamespace(type="url", url="https://example.com/2"),
+                            ],
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="open_page",
+                            url="https://example.com/2",
+                            title="Opened Source",
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(
+                            type="search",
+                            sources=[SimpleNamespace(type="url", url="https://example.com/3")],
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text",
+                                text="Used sources",
+                                annotations=[
+                                    SimpleNamespace(
+                                        type="url_citation",
+                                        title="Opened Source",
+                                        url="https://example.com/2",
+                                    ),
+                                    SimpleNamespace(
+                                        type="url_citation",
+                                        title="Over Budget Source",
+                                        url="https://example.com/3",
+                                    ),
+                                ],
+                            )
+                        ],
+                    ),
+                ],
+            )
+
+    transport = OpenAIResponsesTransport(
+        api_key="test-key",
+        timeout_seconds=12.5,
+        client_factory=lambda **_kwargs: FakeClient(),
+    )
+
+    response = transport.generate(
+        ModelTransportRequest(
+            model="gpt-test",
+            system_instruction="system instruction",
+            user_prompt="user prompt",
+            response_format={"type": "json_schema"},
+            research_budget=WebResearchBudget(max_search_actions=1, max_opened_links=1),
+        )
+    )
+
+    assert [(item.title, item.url) for item in response.web_research_outputs] == [
+        ("https://example.com/1", "https://example.com/1"),
+        ("https://example.com/2", "https://example.com/2"),
+    ]
+    assert response.web_research_budget_usage.search_actions_used == 1
+    assert response.web_research_budget_usage.opened_links_used == 1
+    assert response.web_research_budget_usage.materially_constrained is True
 
 
 def test_openai_responses_transport_rejects_incomplete_status() -> None:
