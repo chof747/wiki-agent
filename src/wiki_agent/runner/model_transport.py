@@ -129,6 +129,7 @@ def _extract_web_research_outputs(
     search_actions_used = 0
     opened_links_used = 0
     materially_constrained = False
+    skipped_budgeted_action = False
 
     def append_output(url: str, title: str) -> None:
         if url in seen_urls:
@@ -146,11 +147,13 @@ def _extract_web_research_outputs(
             if action_type == "search":
                 if research_budget is not None and search_actions_used >= research_budget.max_search_actions:
                     materially_constrained = True
+                    skipped_budgeted_action = True
                     continue
                 search_actions_used += 1
             elif action_type == "open_page":
                 if research_budget is not None and opened_links_used >= research_budget.max_opened_links:
                     materially_constrained = True
+                    skipped_budgeted_action = True
                     continue
                 opened_links_used += 1
 
@@ -162,7 +165,9 @@ def _extract_web_research_outputs(
             url = annotation.get("url")
             if not isinstance(url, str) or not url:
                 continue
-            if research_budget is not None and url not in allowed_urls:
+            if research_budget is not None and url not in allowed_urls and (
+                skipped_budgeted_action or search_actions_used == 0
+            ):
                 materially_constrained = True
                 continue
             title = annotation.get("title")

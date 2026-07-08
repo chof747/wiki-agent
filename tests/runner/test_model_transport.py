@@ -172,6 +172,64 @@ def test_openai_responses_transport_extracts_opened_and_cited_web_urls() -> None
     ]
 
 
+def test_openai_responses_transport_extracts_cited_urls_when_search_call_has_no_url_records() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = self
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                output_text=json.dumps({"action": "update"}),
+                output=[
+                    SimpleNamespace(
+                        type="web_search_call",
+                        action=SimpleNamespace(type="search", query="latest postgresql release"),
+                        status="completed",
+                    ),
+                    SimpleNamespace(
+                        type="message",
+                        content=[
+                            SimpleNamespace(
+                                type="output_text",
+                                text="PostgreSQL 17.5 was released.",
+                                annotations=[
+                                    SimpleNamespace(
+                                        type="url_citation",
+                                        title="PostgreSQL: Release notes",
+                                        url="https://www.postgresql.org/docs/release/17.5/",
+                                    )
+                                ],
+                            )
+                        ],
+                    ),
+                ],
+            )
+
+    transport = OpenAIResponsesTransport(
+        api_key="test-key",
+        timeout_seconds=12.5,
+        client_factory=lambda **_kwargs: FakeClient(),
+    )
+
+    response = transport.generate(
+        ModelTransportRequest(
+            model="gpt-test",
+            system_instruction="system instruction",
+            user_prompt="user prompt",
+            response_format={"type": "json_schema"},
+            research_budget=WebResearchBudget(max_search_actions=3, max_opened_links=3),
+        )
+    )
+
+    assert [(item.title, item.url) for item in response.web_research_outputs] == [
+        ("PostgreSQL: Release notes", "https://www.postgresql.org/docs/release/17.5/")
+    ]
+    assert response.web_research_budget_usage.search_actions_used == 1
+    assert response.web_research_budget_usage.opened_links_used == 0
+    assert response.web_research_budget_usage.materially_constrained is False
+
+
 def test_openai_responses_transport_logs_raw_web_search_output(capsys: pytest.CaptureFixture[str]) -> None:
     class FakeClient:
         def __init__(self) -> None:
