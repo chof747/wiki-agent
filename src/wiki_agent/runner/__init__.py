@@ -51,7 +51,7 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "Never submit the full prompt, full page content, or policy text as a search query."
 )
 WEB_RESEARCH_HINT_PATTERN = re.compile(
-    r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?)\b|[a-z0-9-]+\.[a-z]{2,}",
+    r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?|reddit|forum|community|sources?|cit(?:e|ation)s?)\b|[a-z0-9-]+\.[a-z]{2,}",
     re.IGNORECASE,
 )
 HTTP_URL_PATTERN = re.compile(r"https?://\S+")
@@ -217,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
             rendered_prompt,
             settings,
             transport=transport,
+            user_prompt=_transport_user_prompt(
+                prompt=envelope.prompt,
+                target_page=envelope.target_page,
+            ),
             web_research_required=web_research_required,
         )
     except ModelOutputError as exc:
@@ -284,14 +288,15 @@ def _generate_runner_decision(
     settings: RunnerSettings,
     *,
     transport: ModelTransport,
+    user_prompt: str,
     web_research_required: bool = False,
 ) -> tuple[RunnerDecision, CapabilityResult]:
     try:
         response = transport.generate(
             ModelTransportRequest(
                 model=settings.openai_model,
-                system_instruction=_system_instruction(settings),
-                user_prompt=rendered_prompt,
+                system_instruction=_system_instruction(settings, rendered_prompt=rendered_prompt),
+                user_prompt=user_prompt,
                 response_format=_response_format_schema(),
                 tools=HOSTED_WEB_SEARCH_TOOL,
                 tool_choice=REQUIRED_TOOL_CHOICE if web_research_required else None,
@@ -306,7 +311,12 @@ def _generate_runner_decision(
         raise ModelOutputError(str(exc)) from exc
 
     artifacts: tuple[object, ...] = response.web_research_outputs
-    if response.web_research_budget_usage.materially_constrained and response.web_research_outputs:
+    budget_constrained = response.web_research_budget_usage.materially_constrained or (
+        web_research_required
+        and response.web_research_outputs
+        and response.web_research_budget_usage.search_actions_used >= settings.max_search_actions
+    )
+    if budget_constrained and response.web_research_outputs:
         artifacts = artifacts + (WebResearchBudgetConstraint(message=_research_budget_constraint_message()),)
 
     return _validate_model_payload(payload), CapabilityResult(artifacts=artifacts)
@@ -671,13 +681,21 @@ def _requires_web_research(*, prompt: str, original_comment_text: str) -> bool:
     return WEB_RESEARCH_HINT_PATTERN.search(combined) is not None
 
 
-def _system_instruction(settings: RunnerSettings) -> str:
-    return (
+def _system_instruction(settings: RunnerSettings, *, rendered_prompt: str | None = None) -> str:
+    instruction = (
         DEFAULT_SYSTEM_INSTRUCTION
         + " "
         + f"Use at most {settings.max_search_actions} hosted web search actions and at most "
         + f"{settings.max_opened_links} opened surfaced links during this invocation."
     )
+    if rendered_prompt is None:
+        return instruction
+
+    return instruction + "\n\nFull page-update context:\n" + rendered_prompt
+
+
+def _transport_user_prompt(*, prompt: str, target_page: str) -> str:
+    return f"Target page: {target_page}\nUser request:\n{prompt}"
 
 
 def _research_budget_constraint_message() -> str:

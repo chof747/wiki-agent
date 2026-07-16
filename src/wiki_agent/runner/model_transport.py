@@ -83,6 +83,7 @@ class OpenAIResponsesTransport:
             response,
             request.research_budget,
         )
+        _emit_web_research_budget_log(web_research_budget_usage, request.research_budget)
         return ModelTransportResponse(
             output_text=output_text,
             web_research_outputs=web_research_outputs,
@@ -96,10 +97,39 @@ def _emit_web_search_debug_log(response: Any) -> None:
     if not web_search_items:
         return
 
+    actions = _web_search_action_records(web_search_items)
+    if actions:
+        print(
+            json.dumps(
+                {
+                    "event": "runner.web_search_actions",
+                    "actions": actions,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+
     payload = {
         "event": "runner.web_search_output",
         "web_search_output": [_json_safe(item) for item in web_search_items],
     }
+    print(json.dumps(payload, sort_keys=True), file=sys.stderr)
+
+
+def _emit_web_research_budget_log(
+    usage: WebResearchBudgetUsage,
+    budget: WebResearchBudget | None,
+) -> None:
+    payload = {
+        "event": "runner.web_research_budget_usage",
+        "search_actions_used": usage.search_actions_used,
+        "opened_links_used": usage.opened_links_used,
+        "materially_constrained": usage.materially_constrained,
+    }
+    if budget is not None:
+        payload["max_search_actions"] = budget.max_search_actions
+        payload["max_opened_links"] = budget.max_opened_links
     print(json.dumps(payload, sort_keys=True), file=sys.stderr)
 
 
@@ -117,6 +147,39 @@ def _json_safe(value: Any) -> Any:
     if hasattr(value, "__dict__"):
         return {key: _json_safe(item) for key, item in vars(value).items()}
     return value
+
+
+def _web_search_action_records(web_search_items: list[Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, item in enumerate(web_search_items, start=1):
+        item_payload = _json_safe(item)
+        if not isinstance(item_payload, dict):
+            continue
+
+        action = item_payload.get("action")
+        if not isinstance(action, dict):
+            continue
+
+        action_type = action.get("type")
+        record: dict[str, Any] = {"index": index}
+        if isinstance(action_type, str):
+            record["type"] = action_type
+
+        query = action.get("query")
+        if isinstance(query, str) and query:
+            record["query"] = query
+
+        url = action.get("url")
+        if isinstance(url, str) and url:
+            record["url"] = url
+
+        title = action.get("title")
+        if isinstance(title, str) and title:
+            record["title"] = title
+
+        records.append(record)
+
+    return records
 
 
 def _extract_web_research_outputs(

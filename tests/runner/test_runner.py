@@ -38,11 +38,17 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     assert openai_calls[0]["model"] == runner.DEFAULT_OPENAI_MODEL
     assert openai_calls[0]["tools"] == [{"type": "web_search"}]
     assert "tool_choice" not in openai_calls[0]
-    rendered_prompt = openai_calls[0]["input"][1]["content"]
-    assert "Target page: /pages/example" in rendered_prompt
-    assert "Stripped prompt:\n# Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
-    assert "Original source comment:\n@marvin # Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
-    assert "Current page content:\n# Current page\n" in rendered_prompt
+    system_instruction = openai_calls[0]["input"][0]["content"]
+    assert "Full page-update context:" in system_instruction
+    assert "Target page: /pages/example" in system_instruction
+    assert "Stripped prompt:\n# Rewrite the page\n\nMake it shorter.\n" in system_instruction
+    assert "Original source comment:\n@marvin # Rewrite the page\n\nMake it shorter.\n" in system_instruction
+    assert "Current page content:\n# Current page\n" in system_instruction
+    assert openai_calls[0]["input"][1]["content"] == (
+        "Target page: /pages/example\n"
+        "User request:\n"
+        "# Rewrite the page\n\nMake it shorter.\n"
+    )
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] == "# Replacement page\n\nUpdated content.\n"
@@ -307,10 +313,12 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
         settings: runner.RunnerSettings,
         *,
         transport: object,
+        user_prompt: str,
         web_research_required: bool = False,
     ) -> tuple[runner.RunnerDecision, runner.CapabilityResult]:
         del transport
         assert web_research_required is False
+        assert user_prompt == "Target page: /pages/example\nUser request:\nupdate"
         settings_seen["settings"] = settings
         return runner.UpdateDecision(final_page_content="# Replacement page\n"), runner.CapabilityResult()
 
@@ -362,6 +370,67 @@ def test_runner_requires_web_search_for_current_news_requests(tmp_path: Path) ->
     assert "issue concise search queries tailored to the user's request and the target topic" in system_instruction
     assert "Never submit the full prompt, full page content, or policy text as a search query." in system_instruction
     assert "Use at most 3 hosted web search actions and at most 5 opened surfaced links during this invocation." in system_instruction
+
+
+def test_runner_requires_web_search_for_reddit_summary_requests(tmp_path: Path) -> None:
+    result, _state_path, _helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"},
+            "web_search_sources": ["https://www.reddit.com/r/3Dprinting/example"],
+        },
+        original_comment_text=(
+            "@marvin list me all the 3d printer types of bamboo lab and provide me "
+            "with a comprehensive comment summary from reddit for each of them."
+        ),
+        prompt=(
+            "list me all the 3d printer types of bamboo lab and provide me "
+            "with a comprehensive comment summary from reddit for each of them."
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    openai_call = _read_jsonl(openai_log_path)[0]
+    assert openai_call["tool_choice"] == "required"
+    assert openai_call["input"][1]["content"] == (
+        "Target page: /pages/example\n"
+        "User request:\n"
+        "list me all the 3d printer types of bamboo lab and provide me with a "
+        "comprehensive comment summary from reddit for each of them."
+    )
+    assert "Current page content:" not in openai_call["input"][1]["content"]
+    assert "Original source comment:" not in openai_call["input"][1]["content"]
+    assert "Full page-update context:" in openai_call["input"][0]["content"]
+
+
+def test_runner_discloses_when_required_web_research_uses_full_search_budget(tmp_path: Path) -> None:
+    result, state_path, _helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {"final_page_content": "# Replacement page\n\nPartial Reddit summary.\n"},
+            "web_search_sources": ["https://www.reddit.com/r/3Dprinting/example"],
+        },
+        original_comment_text="@marvin summarize reddit comments about current 3d printers",
+        prompt="summarize reddit comments about current 3d printers",
+        extra_env={
+            "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS": "1",
+            "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS": "5",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Partial Reddit summary.\n\n"
+        "> Note: Web research hit the per-invocation budget. "
+        "This update reflects only the evidence gathered before the limit was reached.\n\n"
+        "## References\n"
+        "- https://www.reddit.com/r/3Dprinting/example\n"
+    )
 
 
 def test_runner_fails_when_required_web_research_returns_no_surfaced_links(tmp_path: Path) -> None:

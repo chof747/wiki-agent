@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -16,6 +17,11 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 MAX_ERROR_DETAIL_LENGTH = 256
+RUNNER_DIAGNOSTIC_EVENTS = {
+    "runner.web_search_actions",
+    "runner.web_search_output",
+    "runner.web_research_budget_usage",
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,7 @@ class Worker:
             )
             return result
 
+        _log_runner_diagnostics(response.stderr, job=job)
         error_detail = _bounded_error_detail(response.stderr)
         rejection_reason_code = response.payload.get("reason_code")
         result = self._finalize_job(job.id, response.status, error_detail=error_detail)
@@ -119,9 +126,50 @@ class Worker:
 
 
 def _bounded_error_detail(value: str) -> str | None:
-    stripped = value.strip()
+    stripped = _prefer_user_facing_error_line(value)
     if not stripped:
         return None
     if len(stripped) <= MAX_ERROR_DETAIL_LENGTH:
         return stripped
     return f"{stripped[: MAX_ERROR_DETAIL_LENGTH - 3]}..."
+
+
+def _prefer_user_facing_error_line(value: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    for line in reversed(lines):
+        if _is_runner_diagnostic_event(line):
+            continue
+        return line
+
+    return ""
+
+
+def _is_runner_diagnostic_event(line: str) -> bool:
+    return _runner_diagnostic_payload(line) is not None
+
+
+def _runner_diagnostic_payload(line: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    return payload if payload.get("event") in RUNNER_DIAGNOSTIC_EVENTS else None
+
+
+def _log_runner_diagnostics(stderr: str, *, job: "CommentJob") -> None:
+    for line in stderr.splitlines():
+        payload = _runner_diagnostic_payload(line.strip())
+        if payload is None:
+            continue
+
+        extra = dict(payload)
+        extra["job_id"] = job.id
+        extra["comment_identity"] = job.comment_identity
+        LOGGER.info("Runner diagnostic event.", extra=extra)
