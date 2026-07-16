@@ -37,3 +37,4 @@ config.toml
 
 # Speckit local cache/artifacts (if created)
 .specify/.cache/
+out.json
