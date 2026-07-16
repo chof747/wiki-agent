@@ -118,6 +118,66 @@ def test_worker_logs_reason_code_and_bounded_error_detail(caplog) -> None:
     assert finalized.error_detail.endswith("...")
 
 
+def test_worker_prefers_terminal_runner_error_over_web_search_debug_log() -> None:
+    repository = FakeRepository(job=_job())
+    runner_client = FakeRunnerClient(
+        response=RunnerResponse(
+            status="UPDATE_FAILED",
+            payload={"status": "UPDATE_FAILED"},
+            stderr=(
+                '{"event": "runner.web_search_actions", "actions": [{"type": "search"}] }\n'
+                '{"event": "runner.web_search_output", "web_search_output": [{"type": "web_search_call"}]}\n'
+                '{"event": "runner.web_research_budget_usage", "materially_constrained": false}\n'
+                "required web research did not return any surfaced links\n"
+            ),
+        )
+    )
+
+    worker = Worker(_config(), repository=repository, runner_client=runner_client)
+    result = worker.run_once()
+
+    assert result == WorkerRunResult(
+        invocation=InvocationOutcome(
+            job=repository.updated_jobs[-1],
+            status="UPDATE_FAILED",
+            error_detail="required web research did not return any surfaced links",
+        )
+    )
+    assert repository.updated == [(1, "UPDATE_FAILED", "required web research did not return any surfaced links")]
+
+
+def test_worker_logs_runner_diagnostics_without_storing_them_as_success_error_detail(caplog) -> None:
+    repository = FakeRepository(job=_job())
+    runner_client = FakeRunnerClient(
+        response=RunnerResponse(
+            status="SUCCESS",
+            payload={"status": "SUCCESS"},
+            stderr=(
+                '{"event": "runner.web_search_actions", "actions": [{"type": "search"}] }\n'
+                '{"event": "runner.web_search_output", "web_search_output": [{"type": "web_search_call"}]}\n'
+                '{"event": "runner.web_research_budget_usage", "materially_constrained": false}\n'
+            ),
+        )
+    )
+
+    worker = Worker(_config(), repository=repository, runner_client=runner_client)
+    with caplog.at_level(logging.INFO):
+        result = worker.run_once()
+
+    assert result == WorkerRunResult(
+        invocation=InvocationOutcome(
+            job=repository.updated_jobs[-1],
+            status="SUCCESS",
+            error_detail=None,
+        )
+    )
+    assert repository.updated == [(1, "SUCCESS", None)]
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "runner.web_search_actions" in events
+    assert "runner.web_search_output" in events
+    assert "runner.web_research_budget_usage" in events
+
+
 def _config():
     return load_config(Path(__file__).parent / "fixtures" / "config.toml")
 

@@ -45,6 +45,7 @@ ADMIN_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_ADMIN_DSN"
 RUNTIME_POSTGRES_DSN_ENV = "WIKI_AGENT_INTEGRATION_RUNTIME_DSN"
 MAIN_APP_POSTGRES_DSN_ENV = "WIKI_AGENT_POSTGRES_DSN"
 WIKIGO_READY_TIMEOUT_SECONDS = 90.0
+DEFAULT_HARNESS_LOG_LEVEL = "INFO"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,8 +53,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="integration-harness")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("up")
-    subparsers.add_parser("reset")
+    up_parser = subparsers.add_parser("up")
+    up_parser.add_argument("--log-level", default=DEFAULT_HARNESS_LOG_LEVEL)
+    reset_parser = subparsers.add_parser("reset")
+    reset_parser.add_argument("--log-level", default=DEFAULT_HARNESS_LOG_LEVEL)
     subparsers.add_parser("test")
     subparsers.add_parser("ci-test")
     subparsers.add_parser("down")
@@ -70,10 +73,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "up":
-        up()
+        up(log_level=args.log_level)
         return 0
     if args.command == "reset":
-        up()
+        up(log_level=args.log_level)
         reset()
         return 0
     if args.command == "test":
@@ -101,13 +104,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.error("unsupported command")
     return 2
 
-def up() -> None:
+def up(*, log_level: str = DEFAULT_HARNESS_LOG_LEVEL) -> None:
     state = load_or_create_state()
     if container_exists() and container_host_port() is None:
         run_docker(["rm", "-f", container_name()])
     if container_exists():
         state = sync_state_with_container(state)
-    ensure_runtime_files(state)
+    ensure_runtime_files(state, log_level=log_level)
 
     if not container_exists():
         if not (DATA_ROOT / "config.yaml").exists():
@@ -117,7 +120,7 @@ def up() -> None:
         state = start_container(state)
 
     state = sync_state_with_container(state)
-    ensure_runtime_files(state)
+    ensure_runtime_files(state, log_level=log_level)
     wait_for_http(state["base_url"])
     if not can_login(state["base_url"], ADMIN_USERNAME, ADMIN_PASSWORD):
         down()
@@ -125,7 +128,7 @@ def up() -> None:
         bootstrap_default_data_dir(state)
         state = start_container(state)
         state = sync_state_with_container(state)
-        ensure_runtime_files(state)
+        ensure_runtime_files(state, log_level=log_level)
         wait_for_http(state["base_url"])
     print(f"Wiki-Go harness is ready at {state['base_url']}")
 
@@ -200,7 +203,7 @@ def down() -> None:
         print("Wiki-Go harness container is not present.")
 
 
-def ensure_runtime_files(state: dict[str, Any]) -> None:
+def ensure_runtime_files(state: dict[str, Any], *, log_level: str = DEFAULT_HARNESS_LOG_LEVEL) -> None:
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     SHIMS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -241,12 +244,12 @@ def ensure_runtime_files(state: dict[str, Any]) -> None:
             'command = ["wiki-agent-runner"]\n\n'
             "[runner.openai]\n"
             f'api_key = "{_toml_string(os.environ.get("OPENAI_API_KEY", "replace-me"))}"\n'
-            f'model = "{_toml_string(os.environ.get("WIKI_AGENT_RUNNER_OPENAI_MODEL", "gpt-4o-2024-08-06"))}"\n'
+            f'model = "{_toml_string(os.environ.get("WIKI_AGENT_RUNNER_OPENAI_MODEL", "gpt-5.4-2026-03-05"))}"\n'
             f'max_input_bytes = {int(os.environ.get("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", "32768"))}\n'
             f'max_output_bytes = {int(os.environ.get("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", "40960"))}\n'
             f'timeout_seconds = {float(os.environ.get("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", "60"))}\n\n'
             "[service]\n"
-            'log_level = "INFO"\n'
+            f'log_level = "{_toml_string(log_level.strip().upper() or DEFAULT_HARNESS_LOG_LEVEL)}"\n'
         ),
         encoding="utf-8",
     )

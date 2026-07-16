@@ -14,9 +14,13 @@ from typing import Any
 from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
-from wiki_agent.ops.config import load_runner_openai_config
+from wiki_agent.ops.config import load_runner_openai_config, load_runner_research_budget_config
 from wiki_agent.runner.capabilities.orchestration import CapabilityContext, CapabilityOrchestrator, CapabilityResult
-from wiki_agent.runner.capabilities.web_research import WebResearchOutput
+from wiki_agent.runner.capabilities.web_research import (
+    WebResearchBudget,
+    WebResearchBudgetConstraint,
+    WebResearchOutput,
+)
 from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
 from wiki_agent.runner.model_transport import (
     ModelTransport,
@@ -39,6 +43,7 @@ DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 HOSTED_WEB_SEARCH_TOOL = ({"type": "web_search"},)
+HOSTED_WEB_SEARCH_INCLUDE = ("web_search_call.action.sources",)
 REQUIRED_TOOL_CHOICE = "required"
 DEFAULT_SYSTEM_INSTRUCTION = (
     "You update exactly one attached wiki page. "
@@ -47,7 +52,7 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "Never submit the full prompt, full page content, or policy text as a search query."
 )
 WEB_RESEARCH_HINT_PATTERN = re.compile(
-    r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?)\b|[a-z0-9-]+\.[a-z]{2,}",
+    r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?|reddit|forum|community|sources?|cit(?:e|ation)s?)\b|[a-z0-9-]+\.[a-z]{2,}",
     re.IGNORECASE,
 )
 HTTP_URL_PATTERN = re.compile(r"https?://\S+")
@@ -103,10 +108,13 @@ class RunnerSettings:
     max_input_bytes: int
     max_output_bytes: int
     model_timeout_seconds: float
+    max_search_actions: int
+    max_opened_links: int
 
     @classmethod
     def from_env(cls) -> "RunnerSettings":
         config_openai = _load_runner_openai_config_from_env()
+        config_research_budget = _load_runner_research_budget_config_from_env()
         return cls(
             api_key=_read_non_empty_string_env(
                 "OPENAI_API_KEY",
@@ -127,6 +135,14 @@ class RunnerSettings:
             model_timeout_seconds=_read_positive_float_env(
                 "WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS",
                 config_openai.timeout_seconds if config_openai is not None else DEFAULT_MODEL_TIMEOUT_SECONDS,
+            ),
+            max_search_actions=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS",
+                config_research_budget.max_search_actions if config_research_budget is not None else 3,
+            ),
+            max_opened_links=_read_positive_int_env(
+                "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS",
+                config_research_budget.max_opened_links if config_research_budget is not None else 5,
             ),
         )
 
@@ -202,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
             rendered_prompt,
             settings,
             transport=transport,
+            user_prompt=_transport_user_prompt(
+                prompt=envelope.prompt,
+                target_page=envelope.target_page,
+            ),
             web_research_required=web_research_required,
         )
     except ModelOutputError as exc:
@@ -269,24 +289,39 @@ def _generate_runner_decision(
     settings: RunnerSettings,
     *,
     transport: ModelTransport,
+    user_prompt: str,
     web_research_required: bool = False,
 ) -> tuple[RunnerDecision, CapabilityResult]:
     try:
         response = transport.generate(
             ModelTransportRequest(
                 model=settings.openai_model,
-                system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
-                user_prompt=rendered_prompt,
+                system_instruction=_system_instruction(settings, rendered_prompt=rendered_prompt),
+                user_prompt=user_prompt,
                 response_format=_response_format_schema(),
                 tools=HOSTED_WEB_SEARCH_TOOL,
                 tool_choice=REQUIRED_TOOL_CHOICE if web_research_required else None,
+                include=HOSTED_WEB_SEARCH_INCLUDE,
+                research_budget=WebResearchBudget(
+                    max_search_actions=settings.max_search_actions,
+                    max_opened_links=settings.max_opened_links,
+                ),
             )
         )
         payload = parse_json_output(response.output_text)
     except ModelTransportError as exc:
         raise ModelOutputError(str(exc)) from exc
 
-    return _validate_model_payload(payload), CapabilityResult(artifacts=response.web_research_outputs)
+    artifacts: tuple[object, ...] = response.web_research_outputs
+    budget_constrained = response.web_research_budget_usage.materially_constrained or (
+        web_research_required
+        and response.web_research_outputs
+        and response.web_research_budget_usage.search_actions_used >= settings.max_search_actions
+    )
+    if budget_constrained and response.web_research_outputs:
+        artifacts = artifacts + (WebResearchBudgetConstraint(message=_research_budget_constraint_message()),)
+
+    return _validate_model_payload(payload), CapabilityResult(artifacts=artifacts)
 
 
 def _response_format_schema() -> dict[str, Any]:
@@ -632,6 +667,13 @@ def _load_runner_openai_config_from_env():
     return load_runner_openai_config(Path(config_path_value))
 
 
+def _load_runner_research_budget_config_from_env():
+    config_path_value = os.getenv("WIKI_AGENT_CONFIG_PATH")
+    if not config_path_value:
+        return None
+    return load_runner_research_budget_config(Path(config_path_value))
+
+
 def _bounded_message(exc: Exception) -> str:
     return str(exc).strip()[:500] or exc.__class__.__name__
 
@@ -639,6 +681,30 @@ def _bounded_message(exc: Exception) -> str:
 def _requires_web_research(*, prompt: str, original_comment_text: str) -> bool:
     combined = f"{prompt}\n{original_comment_text}"
     return WEB_RESEARCH_HINT_PATTERN.search(combined) is not None
+
+
+def _system_instruction(settings: RunnerSettings, *, rendered_prompt: str | None = None) -> str:
+    instruction = (
+        DEFAULT_SYSTEM_INSTRUCTION
+        + " "
+        + f"Use at most {settings.max_search_actions} hosted web search actions and at most "
+        + f"{settings.max_opened_links} opened surfaced links during this invocation."
+    )
+    if rendered_prompt is None:
+        return instruction
+
+    return instruction + "\n\nFull page-update context:\n" + rendered_prompt
+
+
+def _transport_user_prompt(*, prompt: str, target_page: str) -> str:
+    return f"Target page: {target_page}\nUser request:\n{prompt}"
+
+
+def _research_budget_constraint_message() -> str:
+    return (
+        "Web research hit the per-invocation budget. "
+        "This update reflects only the evidence gathered before the limit was reached."
+    )
 
 
 def _invalid_body_link(
