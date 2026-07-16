@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,7 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
 
 
 def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path) -> None:
+    today = datetime.now(UTC).date().isoformat()
     result, state_path, helper_log_path, openai_log_path = _run_runner(
         tmp_path,
         page_markdown="# Current page\n",
@@ -80,6 +82,7 @@ def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path
     assert state["saved_markdown"] == (
         "# Replacement page\n\n"
         "Updated content.\n\n"
+        f"Current-state claims in this update were verified against the listed sources on {today}.\n\n"
         "## References\n"
         "- https://example.com/release-notes\n"
         "- https://docs.example.com/product\n"
@@ -252,14 +255,46 @@ def test_runner_fails_when_required_web_research_returns_no_surfaced_links(tmp_p
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        "status": "UPDATE_FAILED",
-        "error_code": "WEB_RESEARCH_REQUIRED",
-        "message": "required web research did not return any surfaced links",
-    }
-    assert _read_jsonl(helper_log_path) == [{"command": "page.get", "page": "/pages/example"}]
+    assert json.loads(result.stdout) == {"status": "REJECTED_WITH_COMMENT"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "comments.create",
+        "comments.list",
+        "comments.delete",
+        "comments.list",
+    ]
+    assert "required fresh public web verification" in _read_jsonl(helper_log_path)[1]["content"]
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] is None
+
+
+def test_runner_allows_best_effort_update_when_non_strict_web_research_returns_no_surfaced_links(tmp_path: Path) -> None:
+    today = datetime.now(UTC).date().isoformat()
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={"model_output": {"final_page_content": "# Replacement page\n\nUpdated content.\n"}},
+        original_comment_text="@marvin use web research to improve this page",
+        prompt="use web research to improve this page",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert "tool_choice" not in _read_jsonl(openai_log_path)[0]
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Updated content.\n\n"
+        f"Research note (as of {today}): Hosted web search did not surface a source during this invocation, so this update is best-effort from page-local context and may be incomplete.\n"
+    )
 
 
 def test_runner_fails_when_updated_body_contains_unsurfaced_link(tmp_path: Path) -> None:
