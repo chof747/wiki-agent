@@ -37,6 +37,7 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == runner.DEFAULT_OPENAI_MODEL
     assert openai_calls[0]["tools"] == [{"type": "web_search"}]
+    assert openai_calls[0]["include"] == ["web_search_call.action.sources"]
     assert "tool_choice" not in openai_calls[0]
     system_instruction = openai_calls[0]["input"][0]["content"]
     assert "Full page-update context:" in system_instruction
@@ -80,6 +81,7 @@ def test_runner_appends_references_from_surfaced_web_search_links(tmp_path: Path
         "comments.list",
     ]
     assert _read_jsonl(openai_log_path)[0]["tools"] == [{"type": "web_search"}]
+    assert _read_jsonl(openai_log_path)[0]["include"] == ["web_search_call.action.sources"]
     assert _read_jsonl(openai_log_path)[0]["tool_choice"] == "required"
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -401,7 +403,17 @@ def test_runner_requires_web_search_for_reddit_summary_requests(tmp_path: Path) 
     )
     assert "Current page content:" not in openai_call["input"][1]["content"]
     assert "Original source comment:" not in openai_call["input"][1]["content"]
-    assert "Full page-update context:" in openai_call["input"][0]["content"]
+    system_instruction = openai_call["input"][0]["content"]
+    assert "Full page-update context:" in system_instruction
+    assert (
+        "Do not use `UNSUPPORTED_ACTION` for a public web research request solely because "
+        "it asks for an exhaustive catalog, factory specifications, Reddit/community synthesis, "
+        "or per-item summaries."
+    ) in system_instruction
+    assert (
+        'In that situation, `action="update"` is required and `action="reject"` is wrong.'
+        in system_instruction
+    )
 
 
 def test_runner_discloses_when_required_web_research_uses_full_search_budget(tmp_path: Path) -> None:

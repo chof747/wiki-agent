@@ -39,6 +39,7 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
             response_format={"type": "json_schema"},
             tools=({"type": "web_search"},),
             tool_choice="required",
+            include=("web_search_call.action.sources",),
         )
     )
 
@@ -54,6 +55,7 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
         "text": {"format": {"type": "json_schema"}},
         "tools": [{"type": "web_search"}],
         "tool_choice": "required",
+        "include": ["web_search_call.action.sources"],
     }
 
 

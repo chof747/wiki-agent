@@ -24,6 +24,7 @@ class ModelTransportRequest:
     response_format: dict[str, Any]
     tools: tuple[dict[str, Any], ...] = ()
     tool_choice: object | None = None
+    include: tuple[str, ...] = ()
     research_budget: WebResearchBudget | None = None
 
 
@@ -64,6 +65,8 @@ class OpenAIResponsesTransport:
             payload["tools"] = list(request.tools)
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
+        if request.include:
+            payload["include"] = list(request.include)
 
         response = client.responses.create(
             **payload,

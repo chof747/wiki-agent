@@ -137,7 +137,7 @@ command = ["wiki-agent-runner"]
 
 [runner.openai]
 api_key = "sk-your-real-key-here"
-model = "gpt-4o-2024-08-06"
+model = "gpt-5.4-2026-03-05"
 max_input_bytes = 32768
 max_output_bytes = 40960
 timeout_seconds = 60

@@ -43,6 +43,7 @@ DEFAULT_MAX_OUTPUT_BYTES = 40 * 1024
 DEFAULT_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_REJECTION_QUOTE_MAX_BYTES = 500
 HOSTED_WEB_SEARCH_TOOL = ({"type": "web_search"},)
+HOSTED_WEB_SEARCH_INCLUDE = ("web_search_call.action.sources",)
 REQUIRED_TOOL_CHOICE = "required"
 DEFAULT_SYSTEM_INSTRUCTION = (
     "You update exactly one attached wiki page. "
@@ -300,6 +301,7 @@ def _generate_runner_decision(
                 response_format=_response_format_schema(),
                 tools=HOSTED_WEB_SEARCH_TOOL,
                 tool_choice=REQUIRED_TOOL_CHOICE if web_research_required else None,
+                include=HOSTED_WEB_SEARCH_INCLUDE,
                 research_budget=WebResearchBudget(
                     max_search_actions=settings.max_search_actions,
                     max_opened_links=settings.max_opened_links,
