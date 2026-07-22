@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -18,9 +19,10 @@ REJECTION_COMMENT_TEXT = "@marvin update /other-page too"
 REJECTION_REASON_CODE = "CROSS_PAGE_REQUEST"
 REJECTION_EXPLANATION = "This agent can only update the page where the comment was posted."
 WEB_RESEARCH_COMMENT_TEXT = "@marvin update this page with the current public release details using web research"
-WEB_RESEARCH_UPDATED_MARKDOWN = (
+WEB_RESEARCH_UPDATED_MARKDOWN_TEMPLATE = (
     "# Eligible Fixture\n\n"
     "Current public release details updated from web research.\n\n"
+    "Current-state claims in this update were verified against the listed sources on {today}.\n\n"
     "## References\n"
     "- https://example.com/releases/latest\n"
     "- https://docs.example.com/releases\n"
@@ -148,6 +150,7 @@ def test_run_once_creates_visible_rejection_comment_and_finalizes_job(tmp_path: 
 
 @pytest.mark.integration
 def test_run_once_executes_web_research_update_with_cited_references(tmp_path: Path) -> None:
+    today = datetime.now(UTC).date().isoformat()
     script = shutil.which("wiki-agent")
     assert script is not None
 
@@ -199,7 +202,7 @@ def test_run_once_executes_web_research_update_with_cited_references(tmp_path: P
         assert finalized_event["status"] == "SUCCESS"
 
         page = _run_helper(["wikigo-helper", "page", "get", PAGE_PATH], runtime_config=bot_config_path, env=env)
-        assert json.loads(page)["markdown"] == WEB_RESEARCH_UPDATED_MARKDOWN
+        assert json.loads(page)["markdown"] == WEB_RESEARCH_UPDATED_MARKDOWN_TEMPLATE.format(today=today)
 
         comments = json.loads(
             _run_helper(["wikigo-comments", "list", PAGE_PATH], runtime_config=admin_config_path, env=env)

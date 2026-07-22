@@ -12,6 +12,9 @@ class PageCompositionInput:
     current_page_content: str
     model_page_content: str
     capability_result: CapabilityResult
+    invocation_as_of_date: str = ""
+    fresh_verification_obtained: bool = False
+    degraded_web_research: bool = False
 
 
 @dataclass(frozen=True)
@@ -26,8 +29,16 @@ class PageComposer:
             for artifact in composition_input.capability_result.artifacts
             if isinstance(artifact, WebResearchOutput)
         )
+        body, _model_references = _split_references_section(composition_input.model_page_content)
+        body = _append_research_note(
+            body,
+            invocation_as_of_date=composition_input.invocation_as_of_date,
+            fresh_verification_obtained=composition_input.fresh_verification_obtained,
+            degraded_web_research=composition_input.degraded_web_research,
+        )
+
         if not web_research_outputs:
-            return PageComposition(final_page_content=composition_input.model_page_content)
+            return PageComposition(final_page_content=body)
 
         budget_constraint = next(
             (
@@ -41,7 +52,6 @@ class PageComposer:
         if budget_constraint is not None:
             budget_note = f"> Note: {budget_constraint.message}\n\n"
         current_body, current_references = _split_references_section(composition_input.current_page_content)
-        body, _model_references = _split_references_section(composition_input.model_page_content)
         reference_lines = _reference_lines(
             existing_references=current_references,
             web_research_outputs=web_research_outputs,
@@ -102,6 +112,28 @@ def _reference_lines(
         references.append(line)
 
     return tuple(references)
+
+
+def _append_research_note(
+    body: str,
+    *,
+    invocation_as_of_date: str,
+    fresh_verification_obtained: bool,
+    degraded_web_research: bool,
+) -> str:
+    note: str | None = None
+    if fresh_verification_obtained:
+        note = f"Current-state claims in this update were verified against the listed sources on {invocation_as_of_date}."
+    elif degraded_web_research:
+        note = (
+            f"Research note (as of {invocation_as_of_date}): Hosted web search did not surface a source during this "
+            "invocation, so this update is best-effort from page-local context and may be incomplete."
+        )
+
+    if note is None:
+        return body
+
+    return body.rstrip() + "\n\n" + note + "\n"
 
 
 def _extract_url(line: str) -> str | None:

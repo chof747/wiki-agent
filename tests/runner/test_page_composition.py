@@ -28,6 +28,8 @@ def test_page_composer_appends_trailing_references_for_web_research_outputs() ->
                     WebResearchOutput(title="Source 2", url="https://example.com/2"),
                 )
             ),
+            invocation_as_of_date="2026-07-07",
+            fresh_verification_obtained=True,
         )
     )
 
@@ -35,9 +37,31 @@ def test_page_composer_appends_trailing_references_for_web_research_outputs() ->
         final_page_content=(
             "# Updated\n\n"
             "New facts.\n\n"
+            "Current-state claims in this update were verified against the listed sources on 2026-07-07.\n\n"
             "## References\n"
             "- https://example.com/1\n"
             "- https://example.com/2\n"
+        )
+    )
+
+
+def test_page_composer_adds_visible_degraded_research_note_without_references() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content="# Current\n",
+            model_page_content="# Updated\n\nBest-effort rewrite.\n",
+            capability_result=CapabilityResult(),
+            invocation_as_of_date="2026-07-07",
+            degraded_web_research=True,
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "Best-effort rewrite.\n\n"
+            "Research note (as of 2026-07-07): Hosted web search did not surface a source during this invocation, so this "
+            "update is best-effort from page-local context and may be incomplete.\n"
         )
     )
 

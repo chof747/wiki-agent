@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -53,6 +54,18 @@ DEFAULT_SYSTEM_INSTRUCTION = (
 )
 WEB_RESEARCH_HINT_PATTERN = re.compile(
     r"\b(current|latest|news|top stor(?:y|ies)|today|recent|search|web research|with links?|reddit|forum|community|sources?|cit(?:e|ation)s?)\b|[a-z0-9-]+\.[a-z]{2,}",
+    re.IGNORECASE,
+)
+FRESH_VERIFICATION_HINT_PATTERN = re.compile(
+    r"\b(verify|verified|official sources?|authoritative sources?)\b",
+    re.IGNORECASE,
+)
+CURRENT_STATE_TEMPORAL_HINT_PATTERN = re.compile(
+    r"\b(as of|current|currently|latest|today|up to date|up-to-date)\b",
+    re.IGNORECASE,
+)
+CURRENT_STATE_CLAIM_HINT_PATTERN = re.compile(
+    r"\b(version|release|price|pricing|schedule|officeholder|office holder|office-holder|mayor|governor|president|prime minister|news|top stor(?:y|ies)|headline|headlines)\b",
     re.IGNORECASE,
 )
 HTTP_URL_PATTERN = re.compile(r"https?://\S+")
@@ -212,6 +225,11 @@ def main(argv: list[str] | None = None) -> int:
         prompt=envelope.prompt,
         original_comment_text=envelope.original_comment_text,
     )
+    fresh_verification_required = _requires_fresh_verification(
+        prompt=envelope.prompt,
+        original_comment_text=envelope.original_comment_text,
+    )
+    invocation_as_of_date = _invocation_as_of_date()
 
     try:
         decision, transport_capability_result = _generate_runner_decision(
@@ -231,19 +249,23 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_CALL_FAILED", _bounded_message(exc))
         return 0
 
-    if web_research_required and not transport_capability_result.artifacts:
-        _emit_response(
-            STATUS_UPDATE_FAILED,
-            "WEB_RESEARCH_REQUIRED",
-            "required web research did not return any surfaced links",
+    if fresh_verification_required and not transport_capability_result.artifacts:
+        decision = RejectDecision(
+            rejection_reason_code="MISSING_CONTEXT",
+            explanation=(
+                "This request required fresh public web verification, but hosted web search did not surface "
+                "a verifiable source during this invocation."
+            ),
         )
-        return 0
 
     result = _complete_runner_decision(
         completion=completion,
         decision=decision,
         envelope=envelope,
         current_page_content=current_page_content,
+        invocation_as_of_date=invocation_as_of_date,
+        fresh_verification_obtained=fresh_verification_required and bool(transport_capability_result.artifacts),
+        degraded_web_research=web_research_required and not transport_capability_result.artifacts,
         capability_result=CapabilityResult(
             prompt_sections=capability_result.prompt_sections,
             artifacts=capability_result.artifacts + transport_capability_result.artifacts,
@@ -383,6 +405,9 @@ def _complete_runner_decision(
     decision: RunnerDecision,
     envelope: PromptEnvelope,
     current_page_content: str,
+    invocation_as_of_date: str,
+    fresh_verification_obtained: bool,
+    degraded_web_research: bool,
     capability_result: CapabilityResult,
     page_composer: PageComposer,
     settings: RunnerSettings,
@@ -392,6 +417,9 @@ def _complete_runner_decision(
         decision=decision,
         envelope=envelope,
         current_page_content=current_page_content,
+        invocation_as_of_date=invocation_as_of_date,
+        fresh_verification_obtained=fresh_verification_obtained,
+        degraded_web_research=degraded_web_research,
         capability_result=capability_result,
         page_composer=page_composer,
         settings=settings,
@@ -412,6 +440,9 @@ def _execute_primary_action(
     decision: RunnerDecision,
     envelope: PromptEnvelope,
     current_page_content: str,
+    invocation_as_of_date: str,
+    fresh_verification_obtained: bool,
+    degraded_web_research: bool,
     capability_result: CapabilityResult,
     page_composer: PageComposer,
     settings: RunnerSettings,
@@ -422,6 +453,9 @@ def _execute_primary_action(
             decision=decision,
             target_page=envelope.target_page,
             current_page_content=current_page_content,
+            invocation_as_of_date=invocation_as_of_date,
+            fresh_verification_obtained=fresh_verification_obtained,
+            degraded_web_research=degraded_web_research,
             capability_result=capability_result,
             page_composer=page_composer,
             settings=settings,
@@ -442,6 +476,9 @@ def _execute_update_primary_action(
     decision: UpdateDecision,
     target_page: str,
     current_page_content: str,
+    invocation_as_of_date: str,
+    fresh_verification_obtained: bool,
+    degraded_web_research: bool,
     capability_result: CapabilityResult,
     page_composer: PageComposer,
     settings: RunnerSettings,
@@ -451,6 +488,9 @@ def _execute_update_primary_action(
             current_page_content=current_page_content,
             model_page_content=decision.final_page_content,
             capability_result=capability_result,
+            invocation_as_of_date=invocation_as_of_date,
+            fresh_verification_obtained=fresh_verification_obtained,
+            degraded_web_research=degraded_web_research,
         )
     ).final_page_content
 
@@ -681,6 +721,20 @@ def _bounded_message(exc: Exception) -> str:
 def _requires_web_research(*, prompt: str, original_comment_text: str) -> bool:
     combined = f"{prompt}\n{original_comment_text}"
     return WEB_RESEARCH_HINT_PATTERN.search(combined) is not None
+
+
+def _requires_fresh_verification(*, prompt: str, original_comment_text: str) -> bool:
+    combined = f"{prompt}\n{original_comment_text}"
+    if FRESH_VERIFICATION_HINT_PATTERN.search(combined) is not None:
+        return True
+    return (
+        CURRENT_STATE_TEMPORAL_HINT_PATTERN.search(combined) is not None
+        and CURRENT_STATE_CLAIM_HINT_PATTERN.search(combined) is not None
+    )
+
+
+def _invocation_as_of_date() -> str:
+    return datetime.now(UTC).date().isoformat()
 
 
 def _system_instruction(settings: RunnerSettings, *, rendered_prompt: str | None = None) -> str:
