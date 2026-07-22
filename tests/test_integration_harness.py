@@ -23,7 +23,7 @@ def test_main_loads_root_dotenv_before_running_command(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(
         integration_harness,
         "up",
-        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+        lambda **_kwargs: observed.append(integration_harness.runtime_postgres_dsn()),
     )
 
     assert integration_harness.main(["up"]) == 0
@@ -47,11 +47,44 @@ def test_main_preserves_exported_environment_over_root_dotenv(monkeypatch, tmp_p
     monkeypatch.setattr(
         integration_harness,
         "up",
-        lambda: observed.append(integration_harness.runtime_postgres_dsn()),
+        lambda **_kwargs: observed.append(integration_harness.runtime_postgres_dsn()),
     )
 
     assert integration_harness.main(["up"]) == 0
     assert observed == ["postgresql://exported:exported@localhost:5432/wiki_agent"]
+
+
+def test_main_passes_log_level_to_up(monkeypatch, tmp_path: Path) -> None:
+    observed: list[str] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda **kwargs: observed.append(kwargs["log_level"]),
+    )
+
+    assert integration_harness.main(["up", "--log-level", "debug"]) == 0
+    assert observed == ["debug"]
+
+
+def test_main_passes_log_level_to_reset_path(monkeypatch, tmp_path: Path) -> None:
+    observed: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(integration_harness, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        integration_harness,
+        "up",
+        lambda **kwargs: observed.append(("up", kwargs["log_level"])),
+    )
+    monkeypatch.setattr(
+        integration_harness,
+        "reset",
+        lambda: observed.append(("reset", "called")),
+    )
+
+    assert integration_harness.main(["reset", "--log-level", "warning"]) == 0
+    assert observed == [("up", "warning"), ("reset", "called")]
 
 
 def test_load_or_create_state_creates_runtime_directory(monkeypatch, tmp_path: Path) -> None:
@@ -91,6 +124,30 @@ def test_ensure_runtime_files_uses_runtime_dsn_env_override(monkeypatch, tmp_pat
 
     config_text = wiki_agent_config_path.read_text(encoding="utf-8")
     assert 'dsn = "postgresql://ci:ci@localhost:5432/wiki_agent_ci"' in config_text
+
+
+def test_ensure_runtime_files_writes_requested_service_log_level(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    data_root = runtime_root / "wikigo-data"
+    shims_root = runtime_root / "bin"
+    bot_config_path = runtime_root / "wikigo-bot-config.json"
+    admin_config_path = runtime_root / "wikigo-admin-config.json"
+    wiki_agent_config_path = runtime_root / "wiki-agent.integration.toml"
+
+    monkeypatch.setattr(integration_harness, "RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(integration_harness, "DATA_ROOT", data_root)
+    monkeypatch.setattr(integration_harness, "SHIMS_ROOT", shims_root)
+    monkeypatch.setattr(integration_harness, "BOT_CONFIG_PATH", bot_config_path)
+    monkeypatch.setattr(integration_harness, "ADMIN_CONFIG_PATH", admin_config_path)
+    monkeypatch.setattr(integration_harness, "WIKI_AGENT_CONFIG_PATH", wiki_agent_config_path)
+
+    integration_harness.ensure_runtime_files(
+        {"base_url": "http://127.0.0.1:4010", "port": 4010},
+        log_level="debug",
+    )
+
+    config_text = wiki_agent_config_path.read_text(encoding="utf-8")
+    assert 'log_level = "DEBUG"' in config_text
 
 
 def test_runtime_postgres_dsn_falls_back_to_main_app_dsn(monkeypatch) -> None:
@@ -176,7 +233,7 @@ def test_run_once_uses_harness_app_env(monkeypatch) -> None:
         stdout = ""
         stderr = ""
 
-    monkeypatch.setattr(integration_harness, "up", lambda: observed.setdefault("up", True))
+    monkeypatch.setattr(integration_harness, "up", lambda **_kwargs: observed.setdefault("up", True))
     monkeypatch.setattr(
         integration_harness,
         "app_env",
@@ -213,7 +270,7 @@ def test_run_once_uses_harness_app_env(monkeypatch) -> None:
 def test_seed_comment_uses_admin_runtime_identity(monkeypatch) -> None:
     observed: dict[str, object] = {}
 
-    monkeypatch.setattr(integration_harness, "up", lambda: observed.setdefault("up", True))
+    monkeypatch.setattr(integration_harness, "up", lambda **_kwargs: observed.setdefault("up", True))
     monkeypatch.setattr(integration_harness, "reset", lambda: observed.setdefault("reset", True))
     monkeypatch.setattr(
         integration_harness,

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from wiki_agent.runner.capabilities.orchestration import CapabilityResult
-from wiki_agent.runner.capabilities.web_research import WebResearchOutput
+from wiki_agent.runner.capabilities.web_research import WebResearchBudgetConstraint, WebResearchOutput
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,17 @@ class PageComposer:
         if not web_research_outputs:
             return PageComposition(final_page_content=body)
 
+        budget_constraint = next(
+            (
+                artifact
+                for artifact in composition_input.capability_result.artifacts
+                if isinstance(artifact, WebResearchBudgetConstraint)
+            ),
+            None,
+        )
+        budget_note = ""
+        if budget_constraint is not None:
+            budget_note = f"> Note: {budget_constraint.message}\n\n"
         current_body, current_references = _split_references_section(composition_input.current_page_content)
         reference_lines = _reference_lines(
             existing_references=current_references,
@@ -48,7 +59,12 @@ class PageComposer:
             final_page_body=body,
         )
         return PageComposition(
-            final_page_content=body.rstrip() + "\n\n## References\n" + "\n".join(reference_lines) + "\n"
+            final_page_content=body.rstrip()
+            + "\n\n"
+            + budget_note
+            + "## References\n"
+            + "\n".join(reference_lines)
+            + "\n"
         )
 
 

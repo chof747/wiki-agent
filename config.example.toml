@@ -19,6 +19,6 @@ max_output_bytes = 40960
 timeout_seconds = 60
 
 [service]
-log_level = "INFO"
+log_level = "DEBUG"
 scan_interval = 60
 stale_processing_timeout = 900

@@ -37,6 +37,12 @@ class RunnerOpenAIConfig:
 
 
 @dataclass(frozen=True)
+class RunnerResearchBudgetConfig:
+    max_search_actions: int
+    max_opened_links: int
+
+
+@dataclass(frozen=True)
 class ServiceConfig:
     log_level: str
     scan_interval: timedelta
@@ -50,6 +56,7 @@ class AppConfig:
     wikigo: WikiGoConfig
     runner: RunnerCommand
     runner_openai: RunnerOpenAIConfig
+    runner_research_budget: RunnerResearchBudgetConfig
     service: ServiceConfig
 
 
@@ -61,12 +68,17 @@ def load_config(path: Path) -> AppConfig:
         wikigo=_load_wikigo_config(raw),
         runner=_load_runner_command(raw),
         runner_openai=_load_runner_openai_config(raw),
+        runner_research_budget=_load_runner_research_budget_config(raw),
         service=_load_service_config(raw),
     )
 
 
 def load_runner_openai_config(path: Path) -> RunnerOpenAIConfig:
     return _load_runner_openai_config(_load_raw_config(path))
+
+
+def load_runner_research_budget_config(path: Path) -> RunnerResearchBudgetConfig:
+    return _load_runner_research_budget_config(_load_raw_config(path))
 
 
 def load_wikigo_config(path: Path) -> WikiGoConfig:
@@ -184,6 +196,34 @@ def _load_runner_openai_config(raw: dict[str, object]) -> RunnerOpenAIConfig:
         max_input_bytes=int(max_input_bytes),
         max_output_bytes=int(max_output_bytes),
         timeout_seconds=float(timeout_seconds),
+    )
+
+
+def _load_runner_research_budget_config(raw: dict[str, object]) -> RunnerResearchBudgetConfig:
+    runner = raw.get("runner")
+    research_budget = runner.get("research_budget") if isinstance(runner, dict) else None
+    if research_budget is None:
+        research_budget = {}
+    if not isinstance(research_budget, dict):
+        raise ConfigError("runner.research_budget must be a table")
+
+    max_search_actions = _env_or_value(
+        "WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS",
+        research_budget.get("max_search_actions", 3),
+    )
+    if not _is_positive_int(max_search_actions):
+        raise ConfigError("runner.research_budget.max_search_actions must be a positive integer")
+
+    max_opened_links = _env_or_value(
+        "WIKI_AGENT_RUNNER_MAX_OPENED_LINKS",
+        research_budget.get("max_opened_links", 5),
+    )
+    if not _is_positive_int(max_opened_links):
+        raise ConfigError("runner.research_budget.max_opened_links must be a positive integer")
+
+    return RunnerResearchBudgetConfig(
+        max_search_actions=int(max_search_actions),
+        max_opened_links=int(max_opened_links),
     )
 
 
