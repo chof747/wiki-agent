@@ -205,6 +205,69 @@ def test_page_composer_deduplicates_existing_and_new_reference_urls() -> None:
     )
 
 
+def test_page_composer_preserves_conflict_annotations_from_model_references() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content="# Current\n",
+            model_page_content=(
+                "# Updated\n\n"
+                "Official docs say one thing, but community reports disagree.\n\n"
+                "## References\n"
+                "- Authoritative source: https://example.com/official\n"
+                "- Conflicting source: https://example.com/community\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Official", url="https://example.com/official"),
+                    WebResearchOutput(title="Community", url="https://example.com/community"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "Official docs say one thing, but community reports disagree.\n\n"
+            "## References\n"
+            "- Authoritative source: https://example.com/official\n"
+            "- Conflicting source: https://example.com/community\n"
+        )
+    )
+
+
+def test_page_composer_can_upgrade_existing_reference_line_with_model_annotation() -> None:
+    composition = PageComposer().compose_update(
+        PageCompositionInput(
+            current_page_content=(
+                "# Current\n\n"
+                "## References\n"
+                "- https://example.com/community\n"
+            ),
+            model_page_content=(
+                "# Updated\n\n"
+                "Community reports conflict with the vendor statement.\n\n"
+                "## References\n"
+                "- Conflicting source: https://example.com/community\n"
+            ),
+            capability_result=CapabilityResult(
+                artifacts=(
+                    WebResearchOutput(title="Community", url="https://example.com/community"),
+                )
+            ),
+        )
+    )
+
+    assert composition == PageComposition(
+        final_page_content=(
+            "# Updated\n\n"
+            "Community reports conflict with the vendor statement.\n\n"
+            "## References\n"
+            "- Conflicting source: https://example.com/community\n"
+        )
+    )
+
+
 def test_page_composer_removes_reference_when_its_body_link_is_removed() -> None:
     composition = PageComposer().compose_update(
         PageCompositionInput(
