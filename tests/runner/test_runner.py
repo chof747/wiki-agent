@@ -568,11 +568,46 @@ def test_runner_fails_when_updated_body_contains_unsurfaced_link(tmp_path: Path)
     assert json.loads(result.stdout) == {
         "status": "UPDATE_FAILED",
         "error_code": "UNSURFACED_BODY_LINK",
-        "message": "updated page included a link not supported by current page content or surfaced web research: https://www.example.com/story1",
+        "message": "updated page included a link not supported by current page content or hosted web research: https://www.example.com/story1",
     }
     assert _read_jsonl(helper_log_path) == [{"command": "page.get", "page": "/pages/example"}]
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] is None
+
+
+def test_runner_allows_body_link_under_researched_site_path(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {
+                "final_page_content": (
+                    "# Replacement page\n\n"
+                    "Install from the [official download page](https://obsidian.md/download).\n"
+                )
+            },
+            "web_search_sources": ["https://obsidian.md"],
+        },
+        original_comment_text="@marvin Use web research to refresh this page with the latest official installation links for macOS and Linux",
+        prompt="Use web research to refresh this page with the latest official installation links for macOS and Linux",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Install from the [official download page](https://obsidian.md/download).\n\n"
+        "## References\n"
+        "- https://obsidian.md\n"
+    )
 
 
 def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Path) -> None:
