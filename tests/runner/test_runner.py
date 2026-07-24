@@ -419,6 +419,51 @@ def test_runner_requires_web_search_for_reddit_summary_requests(tmp_path: Path) 
         'In that situation, `action="update"` is required and `action="reject"` is wrong.'
         in system_instruction
     )
+    assert "Prefer Authoritative Sources for claims they govern" in system_instruction
+    assert "write the page text with visible uncertainty and attribution" in system_instruction
+
+
+def test_runner_preserves_conflicting_reference_labels_from_model_output(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {
+                "final_page_content": (
+                    "# Replacement page\n\n"
+                    "Official release notes say the feature is limited release, but multiple community reports say it is broadly available.\n\n"
+                    "## References\n"
+                    "- Authoritative source: https://example.com/release-notes\n"
+                    "- Conflicting source: https://community.example.com/thread\n"
+                )
+            },
+            "web_search_sources": [
+                "https://example.com/release-notes",
+                "https://community.example.com/thread",
+            ],
+        },
+        original_comment_text="@marvin use web research to compare official and community reports here",
+        prompt="use web research to compare official and community reports here",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Official release notes say the feature is limited release, but multiple community reports say it is broadly available.\n\n"
+        "## References\n"
+        "- Authoritative source: https://example.com/release-notes\n"
+        "- Conflicting source: https://community.example.com/thread\n"
+    )
 
 
 def test_runner_discloses_when_required_web_research_uses_full_search_budget(tmp_path: Path) -> None:
@@ -523,11 +568,46 @@ def test_runner_fails_when_updated_body_contains_unsurfaced_link(tmp_path: Path)
     assert json.loads(result.stdout) == {
         "status": "UPDATE_FAILED",
         "error_code": "UNSURFACED_BODY_LINK",
-        "message": "updated page included a link not supported by current page content or surfaced web research: https://www.example.com/story1",
+        "message": "updated page included a link not supported by current page content or hosted web research: https://www.example.com/story1",
     }
     assert _read_jsonl(helper_log_path) == [{"command": "page.get", "page": "/pages/example"}]
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] is None
+
+
+def test_runner_allows_body_link_under_researched_site_path(tmp_path: Path) -> None:
+    result, state_path, helper_log_path, _openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown="# Current page\n",
+        openai_output={
+            "model_output": {
+                "final_page_content": (
+                    "# Replacement page\n\n"
+                    "Install from the [official download page](https://obsidian.md/download).\n"
+                )
+            },
+            "web_search_sources": ["https://obsidian.md"],
+        },
+        original_comment_text="@marvin Use web research to refresh this page with the latest official installation links for macOS and Linux",
+        prompt="Use web research to refresh this page with the latest official installation links for macOS and Linux",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "SUCCESS"}
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == [
+        "page.get",
+        "page.save",
+        "page.get",
+        "comments.delete",
+        "comments.list",
+    ]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] == (
+        "# Replacement page\n\n"
+        "Install from the [official download page](https://obsidian.md/download).\n\n"
+        "## References\n"
+        "- https://obsidian.md\n"
+    )
 
 
 def test_runner_returns_update_failed_when_model_output_is_invalid(tmp_path: Path) -> None:

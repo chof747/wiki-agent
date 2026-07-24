@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlsplit
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from importlib import resources
@@ -505,7 +506,7 @@ def _execute_update_primary_action(
         return CompletionResult(
             STATUS_UPDATE_FAILED,
             "UNSURFACED_BODY_LINK",
-            f"updated page included a link not supported by current page content or surfaced web research: {invalid_body_link}",
+            f"updated page included a link not supported by current page content or hosted web research: {invalid_body_link}",
         )
 
     if _utf8_len(final_page_content) > settings.max_output_bytes:
@@ -770,16 +771,45 @@ def _invalid_body_link(
     if not web_research_outputs:
         return None
 
-    current_urls = set(HTTP_URL_PATTERN.findall(_body_without_references(current_page_content)))
-    surfaced_urls = {output.url for output in web_research_outputs}
+    current_urls = {_normalize_http_url(url) for url in HTTP_URL_PATTERN.findall(_body_without_references(current_page_content))}
+    researched_urls = {_normalize_http_url(output.url) for output in web_research_outputs}
 
     for url in HTTP_URL_PATTERN.findall(_body_without_references(final_page_content)):
-        normalized = url.rstrip(")].,;")
-        if normalized in current_urls or normalized in surfaced_urls:
+        normalized = _normalize_http_url(url)
+        if normalized in current_urls or _is_supported_research_url(normalized, researched_urls):
             continue
         return normalized
 
     return None
+
+
+def _normalize_http_url(url: str) -> str:
+    return url.rstrip(")].,;")
+
+
+def _is_supported_research_url(candidate_url: str, researched_urls: set[str]) -> bool:
+    if candidate_url in researched_urls:
+        return True
+
+    candidate = urlsplit(candidate_url)
+    if candidate.scheme not in {"http", "https"} or not candidate.netloc:
+        return False
+
+    candidate_path = candidate.path or "/"
+    for researched_url in researched_urls:
+        researched = urlsplit(researched_url)
+        if (candidate.scheme, candidate.netloc) != (researched.scheme, researched.netloc):
+            continue
+
+        researched_path = researched.path or "/"
+        if researched_path == "/":
+            return True
+
+        descendant_prefix = researched_path if researched_path.endswith("/") else researched_path + "/"
+        if candidate_path.startswith(descendant_prefix):
+            return True
+
+    return False
 
 
 def _body_without_references(markdown: str) -> str:

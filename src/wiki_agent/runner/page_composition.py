@@ -29,7 +29,7 @@ class PageComposer:
             for artifact in composition_input.capability_result.artifacts
             if isinstance(artifact, WebResearchOutput)
         )
-        body, _model_references = _split_references_section(composition_input.model_page_content)
+        body, model_references = _split_references_section(composition_input.model_page_content)
         body = _append_research_note(
             body,
             invocation_as_of_date=composition_input.invocation_as_of_date,
@@ -54,6 +54,7 @@ class PageComposer:
         current_body, current_references = _split_references_section(composition_input.current_page_content)
         reference_lines = _reference_lines(
             existing_references=current_references,
+            model_references=model_references,
             web_research_outputs=web_research_outputs,
             current_page_body=current_body,
             final_page_body=body,
@@ -81,12 +82,21 @@ def _split_references_section(markdown: str) -> tuple[str, tuple[str, ...]]:
 def _reference_lines(
     *,
     existing_references: tuple[str, ...],
+    model_references: tuple[str, ...],
     web_research_outputs: tuple[WebResearchOutput, ...],
     current_page_body: str,
     final_page_body: str,
 ) -> tuple[str, ...]:
     references: list[str] = []
     seen_keys: set[str] = set()
+    existing_reference_urls = {
+        url for line in existing_references if (url := _extract_url(line)) is not None
+    }
+    surfaced_urls = {output.url for output in web_research_outputs}
+    preferred_lines_by_url = _preferred_reference_lines_by_url(
+        model_references=model_references,
+        supported_urls=existing_reference_urls | surfaced_urls,
+    )
 
     for line in existing_references:
         if _is_clearly_obsolete_reference(
@@ -94,6 +104,23 @@ def _reference_lines(
             current_page_body=current_page_body,
             final_page_body=final_page_body,
         ):
+            continue
+
+        reference_line = line
+        url = _extract_url(line)
+        if url is not None:
+            reference_line = preferred_lines_by_url.get(url, line)
+
+        key = _reference_dedupe_key(reference_line)
+        if key in seen_keys:
+            continue
+
+        seen_keys.add(key)
+        references.append(reference_line)
+
+    for line in model_references:
+        url = _extract_url(line)
+        if url is None or url not in preferred_lines_by_url:
             continue
 
         key = _reference_dedupe_key(line)
@@ -104,7 +131,7 @@ def _reference_lines(
         references.append(line)
 
     for output in web_research_outputs:
-        line = f"- {output.url}"
+        line = preferred_lines_by_url.get(output.url, f"- {output.url}")
         key = _reference_dedupe_key(line)
         if key in seen_keys:
             continue
@@ -145,6 +172,20 @@ def _extract_url(line: str) -> str | None:
 
 def _reference_dedupe_key(line: str) -> str:
     return _extract_url(line) or line
+
+
+def _preferred_reference_lines_by_url(
+    *,
+    model_references: tuple[str, ...],
+    supported_urls: set[str],
+) -> dict[str, str]:
+    preferred_lines: dict[str, str] = {}
+    for line in model_references:
+        url = _extract_url(line)
+        if url is None or url not in supported_urls:
+            continue
+        preferred_lines[url] = line
+    return preferred_lines
 
 
 def _is_clearly_obsolete_reference(
