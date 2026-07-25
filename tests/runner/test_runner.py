@@ -11,6 +11,7 @@ import pytest
 
 from wiki_agent.contracts.prompt_envelope import PromptEnvelope, PromptEnvelopeError
 from wiki_agent import runner
+from wiki_agent.runner import model_transport
 
 
 def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Path) -> None:
@@ -36,11 +37,21 @@ def test_runner_executes_openai_backed_successful_page_update_flow(tmp_path: Pat
     openai_calls = _read_jsonl(openai_log_path)
     assert len(openai_calls) == 1
     assert openai_calls[0]["model"] == runner.DEFAULT_OPENAI_MODEL
-    rendered_prompt = openai_calls[0]["input"][1]["content"]
-    assert "Target page: /pages/example" in rendered_prompt
-    assert "Stripped prompt:\n# Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
-    assert "Original source comment:\n@marvin # Rewrite the page\n\nMake it shorter.\n" in rendered_prompt
-    assert "Current page content:\n# Current page\n" in rendered_prompt
+    assert openai_calls[0]["input"][0] == {
+        "role": "system",
+        "content": model_transport.SYSTEM_INSTRUCTION,
+    }
+    assert openai_calls[0]["input"][1] == {
+        "role": "user",
+        "content": "# Rewrite the page\n\nMake it shorter.\n",
+    }
+    attached_context = openai_calls[0]["input"][2]["content"]
+    assert attached_context.startswith("Attached invocation context:\n")
+    assert "Target page: /pages/example" in attached_context
+    assert "Original source comment:\n@marvin # Rewrite the page\n\nMake it shorter.\n" in attached_context
+    assert "Current page content:\n# Current page\n" in attached_context
+    assert "Original source comment:" not in openai_calls[0]["input"][0]["content"]
+    assert "Current page content:" not in openai_calls[0]["input"][0]["content"]
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["saved_markdown"] == "# Replacement page\n\nUpdated content.\n"
@@ -138,13 +149,18 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     )
     settings_seen: dict[str, object] = {}
 
+    class FakeTransport:
+        def payload_bytes(self, *, model: str) -> int:
+            del model
+            return 0
+
     monkeypatch.setattr(runner.environment, "REPO_ROOT", tmp_path)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_OPENAI_MODEL", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_INPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES", raising=False)
     monkeypatch.delenv("WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS", raising=False)
-    def fake_generate_runner_decision(_prompt: str, settings: runner.RunnerSettings) -> runner.RunnerDecision:
+    def fake_generate_runner_decision(_transport: object, settings: runner.RunnerSettings) -> runner.RunnerDecision:
         settings_seen["settings"] = settings
         return runner.UpdateDecision(final_page_content="# Replacement page\n")
 
@@ -155,6 +171,7 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
         "render_prompt",
         lambda **_kwargs: "rendered prompt",
     )
+    monkeypatch.setattr(runner, "build_page_update_transport", lambda **_kwargs: FakeTransport())
     monkeypatch.setattr(runner, "_generate_runner_decision", fake_generate_runner_decision)
     monkeypatch.setattr(runner, "_save_page", lambda _target_page, _content: None)
     monkeypatch.setattr(runner, "_delete_comment", lambda _comment_identity, _target_page: None)
@@ -365,7 +382,48 @@ def test_runner_enforces_input_size_limit_before_model_call(tmp_path: Path) -> N
     assert json.loads(result.stdout) == {
         "status": "UPDATE_FAILED",
         "error_code": "INPUT_TOO_LARGE",
-        "message": "rendered model input exceeded byte limit",
+        "message": "model input payload exceeded byte limit",
+    }
+    assert _read_jsonl(openai_log_path) == []
+    assert [call["command"] for call in _read_jsonl(helper_log_path)] == ["page.get"]
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["saved_markdown"] is None
+
+
+def test_runner_enforces_input_size_limit_against_full_transport_payload(tmp_path: Path) -> None:
+    prompt = "tighten intro"
+    original_comment_text = "@marvin tighten intro"
+    current_page_content = "# Current page\n"
+    rendered_context = runner.render_prompt(
+        template=runner._load_prompt_template(),
+        prompt=prompt,
+        original_comment_text=original_comment_text,
+        target_page="/pages/example",
+        current_page_content=current_page_content,
+    )
+    transport = model_transport.build_page_update_transport(
+        prompt=prompt,
+        rendered_context=rendered_context,
+    )
+    payload_bytes = transport.payload_bytes(model=runner.DEFAULT_OPENAI_MODEL)
+
+    assert payload_bytes > len(rendered_context.encode("utf-8"))
+
+    result, state_path, helper_log_path, openai_log_path = _run_runner(
+        tmp_path,
+        page_markdown=current_page_content,
+        openai_output={"final_page_content": "# Replacement page\n"},
+        prompt=prompt,
+        original_comment_text=original_comment_text,
+        extra_env={"WIKI_AGENT_RUNNER_MAX_INPUT_BYTES": str(payload_bytes - 1)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "UPDATE_FAILED",
+        "error_code": "INPUT_TOO_LARGE",
+        "message": "model input payload exceeded byte limit",
     }
     assert _read_jsonl(openai_log_path) == []
     assert [call["command"] for call in _read_jsonl(helper_log_path)] == ["page.get"]

@@ -16,6 +16,7 @@ from wiki_agent.domain import STATUS_UPDATE_FAILED
 from wiki_agent.ops import environment
 from wiki_agent.ops.config import load_runner_openai_config
 from wiki_agent.runner.completion import CompletionResult, ConfirmedPrimaryAction, RunnerCompletion
+from wiki_agent.runner.model_transport import ModelTransport, build_page_update_transport
 from wiki_agent.wikigo.adapter import (
     WikiGoAdapterError,
     parse_helper_comments_output,
@@ -32,10 +33,10 @@ PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
 PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
 REQUIRED_PROMPT_TOKENS = (
     "{{TARGET_PAGE}}",
-    "{{PROMPT}}",
     "{{ORIGINAL_COMMENT_TEXT}}",
     "{{CURRENT_PAGE_CONTENT}}",
 )
+OPTIONAL_PROMPT_TOKENS = ("{{PROMPT}}",)
 REJECTION_REASON_CODES = {
     "UNCLEAR_REQUEST",
     "MULTI_TARGET_REQUEST",
@@ -149,12 +150,17 @@ def main(argv: list[str] | None = None) -> int:
         _emit_response(STATUS_UPDATE_FAILED, "PROMPT_TEMPLATE_INVALID", str(exc))
         return 0
 
-    if _utf8_len(rendered_prompt) > settings.max_input_bytes:
-        _emit_response(STATUS_UPDATE_FAILED, "INPUT_TOO_LARGE", "rendered model input exceeded byte limit")
+    transport = build_page_update_transport(
+        prompt=envelope.prompt,
+        rendered_context=rendered_prompt,
+    )
+
+    if transport.payload_bytes(model=settings.openai_model) > settings.max_input_bytes:
+        _emit_response(STATUS_UPDATE_FAILED, "INPUT_TOO_LARGE", "model input payload exceeded byte limit")
         return 0
 
     try:
-        decision = _generate_runner_decision(rendered_prompt, settings)
+        decision = _generate_runner_decision(transport, settings)
     except ModelOutputError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "MODEL_OUTPUT_INVALID", str(exc))
         return 0
@@ -193,28 +199,16 @@ def render_prompt(
         "{{ORIGINAL_COMMENT_TEXT}}": original_comment_text,
         "{{CURRENT_PAGE_CONTENT}}": current_page_content,
     }
-    pattern = re.compile("|".join(re.escape(token) for token in REQUIRED_PROMPT_TOKENS))
+    supported_tokens = REQUIRED_PROMPT_TOKENS + OPTIONAL_PROMPT_TOKENS
+    pattern = re.compile("|".join(re.escape(token) for token in supported_tokens))
     return pattern.sub(lambda match: replacements[match.group(0)], template)
 
 
-def _generate_runner_decision(rendered_prompt: str, settings: RunnerSettings) -> RunnerDecision:
+def _generate_runner_decision(transport: ModelTransport, settings: RunnerSettings) -> RunnerDecision:
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.api_key, timeout=settings.model_timeout_seconds)
-    response = client.responses.create(
-        model=settings.openai_model,
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "You update exactly one attached wiki page. "
-                    "Return only structured JSON matching the provided schema."
-                ),
-            },
-            {"role": "user", "content": rendered_prompt},
-        ],
-        text={"format": _response_format_schema()},
-    )
+    response = client.responses.create(**transport.to_openai_request(model=settings.openai_model))
 
     status = getattr(response, "status", None)
     if status not in {None, "completed"}:
@@ -230,27 +224,6 @@ def _generate_runner_decision(rendered_prompt: str, settings: RunnerSettings) ->
         raise ModelOutputError("model output was not valid JSON") from exc
 
     return _validate_model_payload(payload)
-
-
-def _response_format_schema() -> dict[str, Any]:
-    return {
-        "type": "json_schema",
-        "name": "wiki_agent_runner_decision",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["update", "reject"]},
-                "final_page_content": {"type": ["string", "null"]},
-                "rejection_reason_code": {"type": ["string", "null"]},
-                "explanation": {"type": ["string", "null"]},
-            },
-            "required": ["action", "final_page_content", "rejection_reason_code", "explanation"],
-            "additionalProperties": False,
-        },
-        "strict": True,
-    }
-
-
 def _validate_model_payload(payload: object) -> RunnerDecision:
     if not isinstance(payload, dict):
         raise ModelOutputError("model output must be a JSON object matching the runner decision schema")
