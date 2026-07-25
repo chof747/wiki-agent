@@ -339,14 +339,18 @@ def test_runner_main_loads_repo_dotenv_before_reading_settings(monkeypatch, tmp_
     monkeypatch.setattr(runner, "_read_page", lambda _target_page: "# Current page\n")
     monkeypatch.setattr(
         runner,
-        "_load_prompt_template",
+        "_load_context_template",
         lambda: (
-            "Instruction block.\n\n"
             "Target page: {{TARGET_PAGE}}\n\n"
             "Stripped prompt:\n{{PROMPT}}\n\n"
             "Original source comment:\n{{ORIGINAL_COMMENT_TEXT}}\n\n"
             "Current page content:\n{{CURRENT_PAGE_CONTENT}}\n"
         ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_load_system_template",
+        lambda: "Instruction block.",
     )
     monkeypatch.setattr(
         runner,

@@ -72,14 +72,9 @@ CURRENT_STATE_CLAIM_HINT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 HTTP_URL_PATTERN = re.compile(r"https?://\S+")
-PROMPT_TEMPLATE_RESOURCE = "page_update_prompt.md"
+PROMPT_SYSTEM_RESOURCE = "page_update_system.md"
+PROMPT_CONTEXT_RESOURCE = "page_update_prompt.md"
 PROMPT_TEMPLATE_PACKAGE = "wiki_agent.runner.prompts"
-PROMPT_CONTEXT_MARKER = (
-    "\n\nTarget page: {{TARGET_PAGE}}\n\n"
-    "Stripped prompt:\n{{PROMPT}}\n\n"
-    "Original source comment:\n{{ORIGINAL_COMMENT_TEXT}}\n\n"
-    "Current page content:\n{{CURRENT_PAGE_CONTENT}}\n"
-)
 REQUIRED_PROMPT_TOKENS = (
     "{{TARGET_PAGE}}",
     "{{PROMPT}}",
@@ -169,12 +164,6 @@ class RunnerSettings:
         )
 
 
-@dataclass(frozen=True)
-class PromptTemplateLayers:
-    instructions: str
-    context_template: str
-
-
 def main(argv: list[str] | None = None) -> int:
     del argv
     environment.load_repo_environment()
@@ -220,15 +209,15 @@ def main(argv: list[str] | None = None) -> int:
                 current_page_content=current_page_content,
             )
         )
-        prompt_layers = split_prompt_template(_load_prompt_template())
         prompt_context = render_prompt(
-            template=prompt_layers.context_template,
+            template=_load_context_template(),
             prompt=envelope.prompt,
             original_comment_text=envelope.original_comment_text,
             target_page=envelope.target_page,
             current_page_content=current_page_content,
             supplemental_sections=capability_result.prompt_sections,
         )
+        prompt_instructions = _load_system_template()
     except PromptTemplateError as exc:
         _emit_response(STATUS_UPDATE_FAILED, "PROMPT_TEMPLATE_INVALID", str(exc))
         return 0
@@ -244,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     invocation_as_of_date = _invocation_as_of_date()
     transport_request = _build_transport_request(
         settings=settings,
-        prompt_instructions=prompt_layers.instructions,
+        prompt_instructions=prompt_instructions,
         prompt_context=prompt_context,
         request_message=_transport_request_message(
             prompt=envelope.prompt,
@@ -330,19 +319,6 @@ def render_prompt(
         return rendered
 
     return rendered + "\n\n" + "\n\n".join(supplemental_sections)
-
-
-def split_prompt_template(template: str) -> PromptTemplateLayers:
-    marker_index = template.find(PROMPT_CONTEXT_MARKER)
-    if marker_index == -1:
-        raise PromptTemplateError("prompt template must include the runtime context marker")
-
-    instructions = template[:marker_index].strip()
-    context_template = template[marker_index + 2 :]
-    if not instructions:
-        raise PromptTemplateError("prompt template must include instruction content before runtime context")
-
-    return PromptTemplateLayers(instructions=instructions, context_template=context_template)
 
 
 def _generate_runner_decision(
@@ -568,13 +544,22 @@ def _execute_rejection_primary_action(
     )
 
 
-def _load_prompt_template() -> str:
+def _load_context_template() -> str:
     try:
-        return resources.files(PROMPT_TEMPLATE_PACKAGE).joinpath(PROMPT_TEMPLATE_RESOURCE).read_text(
+        return resources.files(PROMPT_TEMPLATE_PACKAGE).joinpath(PROMPT_CONTEXT_RESOURCE).read_text(
             encoding="utf-8"
         )
     except (FileNotFoundError, ModuleNotFoundError, OSError) as exc:
-        raise PromptTemplateError("failed to load prompt template resource") from exc
+        raise PromptTemplateError("failed to load prompt context template resource") from exc
+
+
+def _load_system_template() -> str:
+    try:
+        return resources.files(PROMPT_TEMPLATE_PACKAGE).joinpath(PROMPT_SYSTEM_RESOURCE).read_text(
+            encoding="utf-8"
+        )
+    except (FileNotFoundError, ModuleNotFoundError, OSError) as exc:
+        raise PromptTemplateError("failed to load system instruction template resource") from exc
 
 
 def _read_page(target_page: str) -> str:

@@ -27,19 +27,4 @@ def test_render_prompt_preserves_literal_placeholder_text_inside_values() -> Non
     )
 
 
-def test_split_prompt_template_separates_instructions_from_runtime_context() -> None:
-    layers = runner.split_prompt_template(
-        "Instruction block.\n\n"
-        "Target page: {{TARGET_PAGE}}\n\n"
-        "Stripped prompt:\n{{PROMPT}}\n\n"
-        "Original source comment:\n{{ORIGINAL_COMMENT_TEXT}}\n\n"
-        "Current page content:\n{{CURRENT_PAGE_CONTENT}}\n"
-    )
 
-    assert layers.instructions == "Instruction block."
-    assert layers.context_template == (
-        "Target page: {{TARGET_PAGE}}\n\n"
-        "Stripped prompt:\n{{PROMPT}}\n\n"
-        "Original source comment:\n{{ORIGINAL_COMMENT_TEXT}}\n\n"
-        "Current page content:\n{{CURRENT_PAGE_CONTENT}}\n"
-    )
