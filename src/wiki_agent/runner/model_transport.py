@@ -17,10 +17,15 @@ class ModelTransportError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ModelTransportMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ModelTransportRequest:
     model: str
-    system_instruction: str
-    user_prompt: str
+    input_messages: tuple[ModelTransportMessage, ...]
     response_format: dict[str, Any]
     tools: tuple[dict[str, Any], ...] = ()
     tool_choice: object | None = None
@@ -53,20 +58,7 @@ class OpenAIResponsesTransport:
 
     def generate(self, request: ModelTransportRequest) -> ModelTransportResponse:
         client = self.client_factory(api_key=self.api_key, timeout=self.timeout_seconds)
-        payload: dict[str, Any] = {
-            "model": request.model,
-            "input": [
-                {"role": "system", "content": request.system_instruction},
-                {"role": "user", "content": request.user_prompt},
-            ],
-            "text": {"format": request.response_format},
-        }
-        if request.tools:
-            payload["tools"] = list(request.tools)
-        if request.tool_choice is not None:
-            payload["tool_choice"] = request.tool_choice
-        if request.include:
-            payload["include"] = list(request.include)
+        payload = build_transport_payload(request)
 
         response = client.responses.create(
             **payload,
@@ -92,6 +84,27 @@ class OpenAIResponsesTransport:
             web_research_outputs=web_research_outputs,
             web_research_budget_usage=web_research_budget_usage,
         )
+
+
+def build_transport_payload(request: ModelTransportRequest) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": request.model,
+        "input": [
+            {"role": message.role, "content": message.content} for message in request.input_messages
+        ],
+        "text": {"format": request.response_format},
+    }
+    if request.tools:
+        payload["tools"] = list(request.tools)
+    if request.tool_choice is not None:
+        payload["tool_choice"] = request.tool_choice
+    if request.include:
+        payload["include"] = list(request.include)
+    return payload
+
+
+def transport_payload_utf8_len(request: ModelTransportRequest) -> int:
+    return len(json.dumps(build_transport_payload(request), ensure_ascii=False).encode("utf-8"))
 
 
 def _emit_web_search_debug_log(response: Any) -> None:

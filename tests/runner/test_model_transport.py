@@ -7,11 +7,26 @@ import pytest
 
 from wiki_agent.runner.model_transport import (
     ModelTransportError,
+    ModelTransportMessage,
     ModelTransportRequest,
     OpenAIResponsesTransport,
+    build_transport_payload,
     parse_json_output,
+    transport_payload_utf8_len,
 )
 from wiki_agent.runner.capabilities.web_research import WebResearchBudget
+
+
+def _request() -> ModelTransportRequest:
+    return ModelTransportRequest(
+        model="gpt-test",
+        input_messages=(
+            ModelTransportMessage(role="system", content="system instruction"),
+            ModelTransportMessage(role="user", content="search-safe request"),
+            ModelTransportMessage(role="user", content="invocation context"),
+        ),
+        response_format={"type": "json_schema"},
+    )
 
 
 def test_openai_responses_transport_builds_one_structured_request() -> None:
@@ -34,8 +49,11 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
     response = transport.generate(
         ModelTransportRequest(
             model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
+            input_messages=(
+                ModelTransportMessage(role="system", content="system instruction"),
+                ModelTransportMessage(role="user", content="search-safe request"),
+                ModelTransportMessage(role="user", content="invocation context"),
+            ),
             response_format={"type": "json_schema"},
             tools=({"type": "web_search"},),
             tool_choice="required",
@@ -50,13 +68,24 @@ def test_openai_responses_transport_builds_one_structured_request() -> None:
         "model": "gpt-test",
         "input": [
             {"role": "system", "content": "system instruction"},
-            {"role": "user", "content": "user prompt"},
+            {"role": "user", "content": "search-safe request"},
+            {"role": "user", "content": "invocation context"},
         ],
         "text": {"format": {"type": "json_schema"}},
         "tools": [{"type": "web_search"}],
         "tool_choice": "required",
         "include": ["web_search_call.action.sources"],
     }
+
+
+def test_transport_payload_utf8_len_matches_serialized_payload() -> None:
+    request = _request()
+
+    payload = build_transport_payload(request)
+
+    assert transport_payload_utf8_len(request) == len(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    )
 
 
 def test_openai_responses_transport_extracts_surfaced_web_search_urls() -> None:
@@ -90,12 +119,7 @@ def test_openai_responses_transport_extracts_surfaced_web_search_urls() -> None:
     )
 
     response = transport.generate(
-        ModelTransportRequest(
-            model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
-            response_format={"type": "json_schema"},
-        )
+        _request()
     )
 
     assert [item.url for item in response.web_research_outputs] == [
@@ -160,12 +184,7 @@ def test_openai_responses_transport_extracts_opened_and_cited_web_urls() -> None
     )
 
     response = transport.generate(
-        ModelTransportRequest(
-            model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
-            response_format={"type": "json_schema"},
-        )
+        _request()
     )
 
     assert [(item.title, item.url) for item in response.web_research_outputs] == [
@@ -217,8 +236,7 @@ def test_openai_responses_transport_extracts_cited_urls_when_search_call_has_no_
     response = transport.generate(
         ModelTransportRequest(
             model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
+            input_messages=_request().input_messages,
             response_format={"type": "json_schema"},
             research_budget=WebResearchBudget(max_search_actions=3, max_opened_links=3),
         )
@@ -261,12 +279,7 @@ def test_openai_responses_transport_logs_raw_web_search_output(capsys: pytest.Ca
     )
 
     transport.generate(
-        ModelTransportRequest(
-            model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
-            response_format={"type": "json_schema"},
-        )
+        _request()
     )
 
     stderr_lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
@@ -371,8 +384,7 @@ def test_openai_responses_transport_stops_collecting_web_research_after_budget_e
     response = transport.generate(
         ModelTransportRequest(
             model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
+            input_messages=_request().input_messages,
             response_format={"type": "json_schema"},
             research_budget=WebResearchBudget(max_search_actions=1, max_opened_links=1),
         )
@@ -424,8 +436,7 @@ def test_openai_responses_transport_logs_budget_usage_counts(capsys: pytest.Capt
     transport.generate(
         ModelTransportRequest(
             model="gpt-test",
-            system_instruction="system instruction",
-            user_prompt="user prompt",
+            input_messages=_request().input_messages,
             response_format={"type": "json_schema"},
             research_budget=WebResearchBudget(max_search_actions=1, max_opened_links=1),
         )
@@ -458,12 +469,7 @@ def test_openai_responses_transport_rejects_incomplete_status() -> None:
 
     with pytest.raises(ModelTransportError, match="did not complete successfully"):
         transport.generate(
-            ModelTransportRequest(
-                model="gpt-test",
-                system_instruction="system instruction",
-                user_prompt="user prompt",
-                response_format={"type": "json_schema"},
-            )
+            _request()
         )
 
 
