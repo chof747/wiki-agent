@@ -76,6 +76,22 @@ _Avoid_: response
 Any wiki page modification requested for the **Target Page**, including full-page overwrite.
 _Avoid_: restricted operation set
 
+**Complete Update**:
+An **Update Operation** whose evidence satisfies the requested scope, including any requested completeness claim.
+_Avoid_: polished partial answer, unsupported comprehensive answer
+
+**Partial Evidence Update**:
+An **Update Operation** that provides useful supported content while explicitly stating that the requested scope or completeness claim was not fully established within the **Research Budget** or available context.
+_Avoid_: silent omission, implied completeness, rejection
+
+**Coverage Check**:
+The research step for an enumerable completeness claim that establishes the item inventory or source of truth before writing per-item content.
+_Avoid_: search-result-shaped inventory, plausible subset
+
+**Representative Coverage**:
+The research standard for a non-enumerable broad claim that summarizes the evidence basis without implying exhaustive coverage.
+_Avoid_: exhaustive framing, unstated sample basis
+
 **Web Research**:
 Autonomous read-only searching and fetching of public web sources during an **Invocation** when useful for satisfying the **Prompt**, with authoritative primary sources preferred.
 _Avoid_: user-authorized browsing, authenticated source access, private source access, external mutation
@@ -91,6 +107,14 @@ _Avoid_: inline-only citations, uncited web-derived claims
 **Current-State Claim**:
 A web-derived claim whose accuracy depends on when it is evaluated, such as a latest release, price, schedule, or current officeholder.
 _Avoid_: timeless fact, implicitly current claim
+
+**Source Role**:
+The purpose a web source serves during **Web Research**, such as authoritative evidence for facts, community evidence for sentiment, or current-state evidence for time-sensitive claims.
+_Avoid_: interchangeable source, citation count
+
+**Authoritative Source**:
+A public web source with primary authority for the claim being made, such as an official product page for product specifications or official documentation for API behavior.
+_Avoid_: popular source, convenient source, community confirmation
 
 **Source Conflict**:
 A material disagreement between credible web sources that cannot be resolved during the current **Invocation**.
@@ -241,6 +265,13 @@ _Avoid_: base checkout, main checkout
 - The **Target Page** is inferred from the Wiki-Go page where the comment was found.
 - Comments cannot redirect work to another target page.
 - Cross-page and multi-page requests are rejected with a **Rejection Comment**.
+- For broad researched prompts, the narrowness of an **Update Operation** constrains the mutation to the relevant part of the attached **Target Page**; it does not require minimizing researched content below the requested scope.
+- Enumerable completeness claims require a **Coverage Check** before the **Runner** presents an **Update Operation** as complete.
+- Non-enumerable broad claims require **Representative Coverage** and must not imply exhaustive coverage.
+- A **Partial Evidence Update** must disclose its incomplete evidence basis in page content, not only in runner metadata or operator logs.
+- Web-researched prompts resolve requested scope before collecting details, summaries, commentary, comparisons, or specifications within that scope.
+- **Web Research** identifies **Source Roles** before search so authoritative, community, and current-state evidence are not treated as interchangeable.
+- When a requested scope is likely larger than the **Research Budget**, the **Runner** prioritizes scope establishment over depth so partial updates do not become detailed accidental subsets.
 - Each **Comment Event** maps to one canonical **Comment Job**.
 - The **Idempotency Key** is `source_system + comment_identity`.
 - Duplicate scanner discoveries do not create additional processing rows.

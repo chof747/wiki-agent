@@ -29,6 +29,10 @@ max_input_bytes = 32768
 max_output_bytes = 40960
 timeout_seconds = 60
 
+[runner.research_budget]
+max_search_actions = 3
+max_opened_links = 5
+
 [service]
 log_level = "INFO"
 ```
@@ -38,6 +42,10 @@ Current meanings:
 - `WIKI_AGENT_RUNNER_MAX_INPUT_BYTES`: max rendered prompt size before the model call
 - `WIKI_AGENT_RUNNER_MAX_OUTPUT_BYTES`: max `final_page_content` size for `action="update"` before save
 - `WIKI_AGENT_RUNNER_MODEL_TIMEOUT_SECONDS`: OpenAI SDK request timeout
+- `runner.research_budget.max_search_actions` / `WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS`: maximum hosted web search actions per invocation; default `3`
+- `runner.research_budget.max_opened_links` / `WIKI_AGENT_RUNNER_MAX_OPENED_LINKS`: maximum surfaced links the runner may open per invocation; default `5`
+
+If the research budget is exhausted, Marvin does not abort the invocation just for that reason. It completes a best-effort update with the evidence already gathered, and when the budget materially constrained the result the target page explicitly discloses that the update is based on incomplete research.
 
 Local startup precedence is:
 
@@ -93,6 +101,8 @@ uncommitted repo-root `.env` file:
 ```dotenv
 OPENAI_API_KEY=sk-your-real-key-here
 WIKI_AGENT_POSTGRES_DSN=postgresql://wiki_agent:wiki_agent@localhost:5432/wiki_agent
+WIKI_AGENT_RUNNER_MAX_SEARCH_ACTIONS=3
+WIKI_AGENT_RUNNER_MAX_OPENED_LINKS=5
 ```
 
 `wiki-agent`, `wiki-agent-runner`, and `wiki-agent-integration` load that file
@@ -137,10 +147,14 @@ command = ["wiki-agent-runner"]
 
 [runner.openai]
 api_key = "sk-your-real-key-here"
-model = "gpt-4o-2024-08-06"
+model = "gpt-5.4-2026-03-05"
 max_input_bytes = 32768
 max_output_bytes = 40960
 timeout_seconds = 60
+
+[runner.research_budget]
+max_search_actions = 3
+max_opened_links = 5
 
 [service]
 log_level = "INFO"
